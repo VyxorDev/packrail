@@ -2,8 +2,14 @@
 set -eu
 
 repo='VyxorDev/packrail'
-version_url='https://raw.githubusercontent.com/VyxorDev/packrail/main/VERSION'
-version="$(curl -fsSL "$version_url" | tr -d '\r\n')"
+version="${PACKRAIL_INSTALL_VERSION:-}"
+if [ -z "$version" ]; then
+  # This fallback is for running the source script from the repository.
+  # Published release assets inject PACKRAIL_INSTALL_VERSION so they never
+  # depend on the moving main branch.
+  version_url='https://raw.githubusercontent.com/VyxorDev/packrail/main/VERSION'
+  version="$(curl -fsSL "$version_url?cachebust=$(date +%s)" | tr -d '\r\n')"
+fi
 [ -n "$version" ] || { echo 'Packrail VERSION is empty.' >&2; exit 1; }
 
 os_raw="$(uname -s)"
