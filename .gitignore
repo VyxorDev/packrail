@@ -1,5 +1,5 @@
-prl
-prl.exe
+/prl
+/prl.exe
 *.test
 .coverage
 .DS_Store
