@@ -17,7 +17,7 @@ import (
 	packruntimes "github.com/VyxorDev/packrail/internal/runtimes"
 )
 
-const version = "0.5.0-alpha"
+const version = "0.6.0-alpha"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -61,6 +61,25 @@ func run(args []string) error {
 		fmt.Printf("Installed %s %s\n", pkg.Name, pkg.Version)
 		fmt.Printf("Command: %s\n", pkg.Command.Name)
 		fmt.Printf("Bin directory: %s\n", filepath.Join(home, "bin"))
+		return nil
+
+	case "update", "upgrade":
+		return updateCommand(args[1:])
+
+	case "remove", "uninstall", "rm":
+		if len(args) != 2 {
+			return fmt.Errorf("usage: prl remove <package>")
+		}
+		removed, err := install.Remove(args[1])
+		if err != nil {
+			return err
+		}
+		versions := make([]string, 0, len(removed))
+		for _, record := range removed {
+			versions = append(versions, record.Version)
+		}
+		fmt.Printf("Removed %s (%s)\n", removed[0].Name, strings.Join(versions, ", "))
+		fmt.Println("Shared runtime caches were kept for other packages.")
 		return nil
 
 	case "info":
@@ -116,6 +135,9 @@ func run(args []string) error {
 	case "package":
 		return packageCommand(args[1:])
 
+	case "runtime":
+		return runtimeCommand(args[1:])
+
 	case "list", "ls":
 		return listInstalled()
 
@@ -135,9 +157,66 @@ func run(args []string) error {
 	}
 }
 
+func updateCommand(args []string) error {
+	refreshRegistry()
+	if len(args) > 1 {
+		return fmt.Errorf("usage: prl update [package]")
+	}
+	if len(args) == 1 {
+		return updateOne(args[0])
+	}
+
+	records, err := install.InstalledRecords()
+	if err != nil {
+		return err
+	}
+	if len(records) == 0 {
+		fmt.Println("No packages installed.")
+		return nil
+	}
+	seen := map[string]bool{}
+	var names []string
+	for _, record := range records {
+		key := strings.ToLower(record.Name)
+		if !seen[key] {
+			seen[key] = true
+			names = append(names, record.Name)
+		}
+	}
+	sort.Strings(names)
+	var failures []string
+	for _, name := range names {
+		if err := updateOne(name); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: %s: %v\n", name, err)
+			failures = append(failures, name)
+		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("failed to update: %s", strings.Join(failures, ", "))
+	}
+	return nil
+}
+
+func updateOne(name string) error {
+	pkg, err := registry.Find(name)
+	if err != nil {
+		return err
+	}
+	from, changed, err := install.Update(pkg)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		fmt.Printf("%s is already up to date (%s).\n", pkg.Name, pkg.Version)
+		return nil
+	}
+	fmt.Printf("Updated %s %s -> %s\n", pkg.Name, strings.Join(from, ","), pkg.Version)
+	return nil
+}
+
 func packageCommand(args []string) error {
 	if len(args) < 2 {
-		return fmt.Errorf("usage: prl package inspect <github-repo> | prl package generate <github-repo> [--command <name>]")
+		return fmt.Errorf("usage: prl package inspect|generate|add <github-repo>")
 	}
 	client := publisher.New()
 
@@ -162,35 +241,111 @@ func packageCommand(args []string) error {
 		}
 		return nil
 
-	case "generate":
+	case "generate", "add":
 		repo := args[1]
 		command := ""
+		registryPath := filepath.FromSlash("internal/registry/data/packages.json")
 		for i := 2; i < len(args); i++ {
-			if args[i] != "--command" || i+1 >= len(args) {
-				return fmt.Errorf("usage: prl package generate <github-repo> [--command <name>]")
+			switch args[i] {
+			case "--command":
+				if i+1 >= len(args) {
+					return fmt.Errorf("--command requires a value")
+				}
+				command = args[i+1]
+				i++
+			case "--registry":
+				if i+1 >= len(args) {
+					return fmt.Errorf("--registry requires a path")
+				}
+				registryPath = args[i+1]
+				i++
+			default:
+				return fmt.Errorf("unknown package option %q", args[i])
 			}
-			command = args[i+1]
-			i++
 		}
 		draft, err := client.Generate(repo, command)
 		if err != nil {
 			return err
 		}
-		data, err := encodePackageJSON(draft.Package)
-		if err != nil {
-			return fmt.Errorf("encode package draft: %w", err)
-		}
-		fmt.Print(string(data))
 		for _, warning := range draft.Warnings {
 			fmt.Fprintf(os.Stderr, "warning: %s\n", warning)
 		}
-		if !draft.Complete {
-			fmt.Fprintln(os.Stderr, "warning: generated draft is incomplete; review command and entrypoints before adding it to the registry")
+		if args[0] == "generate" {
+			data, err := encodePackageJSON(draft.Package)
+			if err != nil {
+				return fmt.Errorf("encode package draft: %w", err)
+			}
+			fmt.Print(string(data))
+			if !draft.Complete {
+				fmt.Fprintln(os.Stderr, "warning: generated draft is incomplete; review command and entrypoints before adding it to the registry")
+			}
+			return nil
 		}
+		if !draft.Complete {
+			return fmt.Errorf("package draft is incomplete; fix the warnings or provide --command before adding it")
+		}
+		replaced, err := publisher.UpsertRegistryFile(registryPath, draft.Package)
+		if err != nil {
+			return err
+		}
+		action := "Added"
+		if replaced {
+			action = "Updated"
+		}
+		fmt.Printf("%s %s %s in %s\n", action, draft.Package.Name, draft.Package.Version, registryPath)
+		fmt.Println("Review the diff, run tests, then commit the registry change.")
 		return nil
 	default:
-		return fmt.Errorf("unknown package command %q; use 'prl package inspect' or 'prl package generate'", args[0])
+		return fmt.Errorf("unknown package command %q; use inspect, generate, or add", args[0])
 	}
+}
+
+func runtimeCommand(args []string) error {
+	if len(args) == 0 || args[0] == "list" {
+		if len(args) > 1 {
+			return fmt.Errorf("usage: prl runtime list")
+		}
+		home, err := install.Home()
+		if err != nil {
+			return err
+		}
+		for _, name := range []string{"node", "python", "java", "dotnet"} {
+			versions, err := packruntimes.InstalledVersions(home, name)
+			if err != nil {
+				return err
+			}
+			if len(versions) == 0 {
+				fmt.Printf("%-8s not installed\n", name)
+			} else {
+				fmt.Printf("%-8s %s\n", name, strings.Join(versions, ", "))
+			}
+		}
+		return nil
+	}
+	if args[0] != "install" || len(args) < 2 || len(args) > 3 {
+		return fmt.Errorf("usage: prl runtime install <node|python|java|dotnet> [constraint]")
+	}
+	name := strings.ToLower(args[1])
+	defaults := map[string]string{"node": ">=20", "python": ">=3.11", "java": ">=21", "dotnet": ">=8"}
+	constraint := defaults[name]
+	if constraint == "" {
+		return fmt.Errorf("unsupported runtime %q", name)
+	}
+	if len(args) == 3 {
+		constraint = args[2]
+	}
+	home, err := install.Home()
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Resolving %s %s for %s/%s...\n", name, constraint, runtime.GOOS, runtime.GOARCH)
+	result, err := packruntimes.Ensure(home, registry.Runtime{Name: name, Constraint: constraint, Command: name})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Installed %s %s\n", name, result.Version)
+	fmt.Printf("Executable: %s\n", result.Executable)
+	return nil
 }
 
 func encodePackageJSON(pkg registry.Package) ([]byte, error) {
@@ -252,57 +407,16 @@ func refreshRegistry() {
 }
 
 func listInstalled() error {
-	home, err := install.Home()
+	records, err := install.InstalledRecords()
 	if err != nil {
 		return err
 	}
-	packagesDir := filepath.Join(home, "packages")
-	entries, err := os.ReadDir(packagesDir)
-	if os.IsNotExist(err) {
+	if len(records) == 0 {
 		fmt.Println("No packages installed.")
 		return nil
 	}
-	if err != nil {
-		return fmt.Errorf("read installed packages: %w", err)
-	}
-
-	type row struct{ name, version string }
-	var rows []row
-	for _, packageEntry := range entries {
-		if !packageEntry.IsDir() {
-			continue
-		}
-		versions, err := os.ReadDir(filepath.Join(packagesDir, packageEntry.Name()))
-		if err != nil {
-			continue
-		}
-		for _, versionEntry := range versions {
-			if !versionEntry.IsDir() {
-				continue
-			}
-			recordPath := filepath.Join(packagesDir, packageEntry.Name(), versionEntry.Name(), ".packrail.json")
-			data, err := os.ReadFile(recordPath)
-			if err != nil {
-				continue
-			}
-			var record install.InstallRecord
-			if json.Unmarshal(data, &record) == nil {
-				rows = append(rows, row{record.Name, record.Version})
-			}
-		}
-	}
-	if len(rows) == 0 {
-		fmt.Println("No packages installed.")
-		return nil
-	}
-	sort.Slice(rows, func(i, j int) bool {
-		if rows[i].name == rows[j].name {
-			return rows[i].version < rows[j].version
-		}
-		return rows[i].name < rows[j].name
-	})
-	for _, r := range rows {
-		fmt.Printf("%-20s %s\n", r.name, r.version)
+	for _, record := range records {
+		fmt.Printf("%-20s %s\n", record.Name, record.Version)
 	}
 	return nil
 }
@@ -328,15 +442,16 @@ func doctor() error {
 	if err == nil {
 		fmt.Printf("Registry: %s (%d packages)\n", status.Source, status.PackageCount)
 	}
-
-	nodeVersions, err := packruntimes.InstalledVersions(home, "node")
-	if err != nil {
-		return err
-	}
-	if len(nodeVersions) == 0 {
-		fmt.Println("Node:     no Packrail-managed runtime installed")
-	} else {
-		fmt.Printf("Node:     managed %s\n", strings.Join(nodeVersions, ", "))
+	for _, name := range []string{"node", "python", "java", "dotnet"} {
+		versions, err := packruntimes.InstalledVersions(home, name)
+		if err != nil {
+			return err
+		}
+		if len(versions) == 0 {
+			fmt.Printf("%-9s no managed runtime installed\n", strings.Title(name)+":")
+		} else {
+			fmt.Printf("%-9s managed %s\n", strings.Title(name)+":", strings.Join(versions, ", "))
+		}
 	}
 	return nil
 }
@@ -360,16 +475,21 @@ func printHelp() {
 Universal package distribution for open-source software.
 
 Usage:
-  prl install <package>                 Install a package and its required runtime
-  prl search [query]                    Search the GitHub-backed registry
-  prl info <package>                    Show package and platform metadata
-  prl package inspect <github-repo>     Inspect a GitHub Release for Packrail assets
-  prl package generate <github-repo>    Generate a Packrail registry draft
-  prl registry status                   Show registry source and cache state
-  prl registry sync                     Force-sync package metadata from GitHub
-  prl list                              List installed packages
-  prl doctor                            Check the local Packrail environment
-  prl version                           Print the CLI version
-  prl help                              Show this help
+  prl install <package>                         Install a package and required runtime
+  prl update [package]                          Update one package or all installed packages
+  prl remove <package>                          Remove a package and its tracked shims/files
+  prl search [query]                            Search the GitHub-backed registry
+  prl info <package>                            Show package and platform metadata
+  prl package inspect <github-repo>             Inspect a GitHub Release for Packrail assets
+  prl package generate <github-repo>            Generate a Packrail registry draft
+  prl package add <github-repo>                 Generate, validate, and upsert registry metadata
+  prl runtime install <runtime> [constraint]    Install a managed Node/Python/Java/.NET runtime
+  prl runtime list                              List Packrail-managed runtimes
+  prl registry status                           Show registry source and cache state
+  prl registry sync                             Force-sync package metadata from GitHub
+  prl list                                      List installed packages
+  prl doctor                                    Check the local Packrail environment
+  prl version                                   Print the CLI version
+  prl help                                      Show this help
 `, version)
 }
