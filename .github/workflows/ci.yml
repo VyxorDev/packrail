@@ -36,7 +36,7 @@ jobs:
       - name: Build prl
         run: go build ./cmd/prl
 
-  smoke:
+  managed-runtime-smoke:
     name: managed-runtime-smoke
     runs-on: ubuntu-latest
 
@@ -62,3 +62,49 @@ jobs:
           test -d "$PACKRAIL_HOME/runtimes/node"
           grep -q '"managed_runtime": true' "$PACKRAIL_HOME/packages/starterqueue/0.5.0/.packrail.json"
           ./prl doctor
+
+  native-package-smoke:
+    name: native-${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: true
+
+      - name: Build prl on Unix
+        if: runner.os != 'Windows'
+        run: go build -o prl ./cmd/prl
+
+      - name: Build prl on Windows
+        if: runner.os == 'Windows'
+        run: go build -o prl.exe ./cmd/prl
+
+      - name: Install and run ripgrep on Unix
+        if: runner.os != 'Windows'
+        env:
+          PACKRAIL_HOME: ${{ runner.temp }}/packrail-ripgrep
+        run: |
+          ./prl install ripgrep
+          "$PACKRAIL_HOME/bin/rg" --version | grep -q 'ripgrep 15.2.0'
+          test -f "$PACKRAIL_HOME/packages/ripgrep/15.2.0/.packrail.json"
+
+      - name: Install and run ripgrep on Windows
+        if: runner.os == 'Windows'
+        env:
+          PACKRAIL_HOME: ${{ runner.temp }}/packrail-ripgrep
+        shell: pwsh
+        run: |
+          .\prl.exe install ripgrep
+          $output = & "$env:PACKRAIL_HOME\bin\rg.cmd" --version
+          if ($output -notmatch 'ripgrep 15.2.0') { throw "unexpected ripgrep version: $output" }
+          if (-not (Test-Path "$env:PACKRAIL_HOME\packages\ripgrep\15.2.0\.packrail.json")) { throw 'install record missing' }
