@@ -15,9 +15,16 @@ try {
     $repo = 'VyxorDev/packrail'
 
     $stage = 'reading Packrail version'
-    $versionUrl = 'https://raw.githubusercontent.com/VyxorDev/packrail/main/VERSION'
-    $versionResponse = Invoke-RestMethod -UseBasicParsing $versionUrl
-    $version = [string]$versionResponse
+    $version = [string]$env:PACKRAIL_INSTALL_VERSION
+    if ([string]::IsNullOrWhiteSpace($version)) {
+        # This fallback is for running the source script from the repository.
+        # Published release assets inject PACKRAIL_INSTALL_VERSION so they are
+        # immutable and never depend on the moving main branch.
+        $cacheBust = [Guid]::NewGuid().ToString('N')
+        $versionUrl = "https://raw.githubusercontent.com/VyxorDev/packrail/main/VERSION?cachebust=$cacheBust"
+        $versionResponse = Invoke-RestMethod -UseBasicParsing $versionUrl
+        $version = [string]$versionResponse
+    }
     if ([string]::IsNullOrWhiteSpace($version)) {
         throw 'Packrail VERSION is empty.'
     }
