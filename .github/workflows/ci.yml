@@ -105,6 +105,6 @@ jobs:
         shell: pwsh
         run: |
           .\prl.exe install ripgrep
-          $output = & "$env:PACKRAIL_HOME\bin\rg.cmd" --version
+          $output = (& "$env:PACKRAIL_HOME\bin\rg.cmd" --version) -join "`n"
           if ($output -notmatch 'ripgrep 15.2.0') { throw "unexpected ripgrep version: $output" }
           if (-not (Test-Path "$env:PACKRAIL_HOME\packages\ripgrep\15.2.0\.packrail.json")) { throw 'install record missing' }
