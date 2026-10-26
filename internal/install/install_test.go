@@ -2,6 +2,7 @@ package install
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"compress/gzip"
 	"os"
 	"path/filepath"
@@ -38,6 +39,32 @@ func writeTGZ(t *testing.T, entries map[string]string) string {
 	return path
 }
 
+func writeZIP(t *testing.T, entries map[string]string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "test.zip")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(file)
+	for name, contents := range entries {
+		entry, err := zw.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := entry.Write([]byte(contents)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func TestExtractTGZ(t *testing.T) {
 	archive := writeTGZ(t, map[string]string{"package/bin/tool.js": "console.log('ok')"})
 	destination := t.TempDir()
@@ -57,5 +84,27 @@ func TestExtractTGZRejectsTraversal(t *testing.T) {
 	archive := writeTGZ(t, map[string]string{"../escape.txt": "nope"})
 	if err := extractTGZ(archive, t.TempDir()); err == nil {
 		t.Fatal("expected path traversal archive to be rejected")
+	}
+}
+
+func TestExtractZIP(t *testing.T) {
+	archive := writeZIP(t, map[string]string{"tool/bin/tool.exe": "binary"})
+	destination := t.TempDir()
+	if err := extractZIP(archive, destination); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(destination, "tool", "bin", "tool.exe"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "binary" {
+		t.Fatalf("unexpected extracted content: %q", data)
+	}
+}
+
+func TestExtractZIPRejectsTraversal(t *testing.T) {
+	archive := writeZIP(t, map[string]string{"../escape.txt": "nope"})
+	if err := extractZIP(archive, t.TempDir()); err == nil {
+		t.Fatal("expected zip path traversal archive to be rejected")
 	}
 }
