@@ -47,7 +47,7 @@ func run(args []string) error {
 				return fmt.Errorf("usage: prl install github:owner/repo")
 			}
 			fmt.Printf("Inspecting GitHub release: %s\n", repo)
-			draft, draftErr := publisher.New().Generate(repo, "")
+			draft, draftErr := publisher.New().GenerateForPlatform(repo, "", runtime.GOOS, runtime.GOARCH)
 			if draftErr != nil {
 				return draftErr
 			}
