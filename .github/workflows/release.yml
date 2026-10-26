@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version without the leading v, for example 0.7.0-alpha
+        required: true
+        type: string
+      confirm:
+        description: Type the exact release tag, for example v0.7.0-alpha
+        required: true
+        type: string
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/release.yml
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.repository == 'VyxorDev/packrail'
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_VERSION: ${{ github.event_name == 'push' && '0.6.0-alpha' || inputs.version }}
+      RELEASE_CONFIRM: ${{ github.event_name == 'push' && 'v0.6.0-alpha' || inputs.confirm }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: true
+
+      - name: Validate release intent
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RELEASE_CONFIRM" = "v$RELEASE_VERSION"
+          [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          grep -Fq "const version = \"$RELEASE_VERSION\"" cmd/prl/main.go
+          go test ./...
+          go vet ./...
+
+      - name: Build release binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          build() {
+            local goos="$1"
+            local goarch="$2"
+            local output="$3"
+            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="-s -w" -o "dist/$output" ./cmd/prl
+          }
+
+          build windows amd64 prl-windows-amd64.exe
+          build windows arm64 prl-windows-arm64.exe
+          build linux amd64 prl-linux-amd64
+          build linux arm64 prl-linux-arm64
+          build darwin amd64 prl-macos-amd64
+          build darwin arm64 prl-macos-arm64
+
+          (cd dist && sha256sum prl-* > SHA256SUMS.txt)
+          ls -lh dist
+          cat dist/SHA256SUMS.txt
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="v$RELEASE_VERSION"
+          notes="Packrail $tag\n\nCross-platform prl binaries for Windows, Linux, and macOS on x64 and ARM64. Verify downloads with SHA256SUMS.txt."
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/* --clobber
+          else
+            gh release create "$tag" \
+              --target "$GITHUB_SHA" \
+              --title "Packrail $tag" \
+              --notes "$notes" \
+              --prerelease \
+              dist/*
+          fi
