@@ -53,16 +53,18 @@ jobs:
       - name: Build prl
         run: go build -o prl ./cmd/prl
 
-      - name: Inspect and generate StarterQueue package metadata
+      - name: Inspect generate and add StarterQueue metadata
         run: |
           ./prl package inspect VyxorDev/starterqueue | tee inspect.txt
           grep -q 'starterqueue-0.5.0.tgz' inspect.txt
           ./prl package generate VyxorDev/starterqueue > package-draft.json
-          cat package-draft.json
           grep -q '"name": "starterqueue"' package-draft.json
           grep -q '"constraint": ">=20"' package-draft.json
           grep -q 'package/dist/src/cli.js' package-draft.json
           grep -q '98dbcaa198576cb168f4ee024135e4fb910b91a8757763f45280809ebca46560' package-draft.json
+          cp internal/registry/data/packages.json registry-copy.json
+          ./prl package add VyxorDev/starterqueue --registry registry-copy.json
+          grep -q '"name": "starterqueue"' registry-copy.json
 
   registry-smoke:
     name: registry-smoke
@@ -117,6 +119,35 @@ jobs:
           test -d "$PACKRAIL_HOME/runtimes/node"
           grep -q '"managed_runtime": true' "$PACKRAIL_HOME/packages/starterqueue/0.5.0/.packrail.json"
           ./prl doctor
+
+  lifecycle-smoke:
+    name: lifecycle-smoke
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: true
+
+      - name: Build prl
+        run: go build -o prl ./cmd/prl
+
+      - name: Install update and remove a native package
+        env:
+          PACKRAIL_HOME: ${{ runner.temp }}/packrail-lifecycle
+        run: |
+          ./prl install ripgrep
+          test -x "$PACKRAIL_HOME/bin/rg"
+          ./prl update ripgrep | grep -q 'already up to date'
+          ./prl remove ripgrep
+          test ! -e "$PACKRAIL_HOME/bin/rg"
+          test ! -e "$PACKRAIL_HOME/packages/ripgrep"
+          ./prl list | grep -q 'No packages installed'
 
   native-package-smoke:
     name: native-${{ matrix.os }}
