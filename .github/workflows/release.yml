@@ -113,3 +113,57 @@ jobs:
             --notes-file RELEASE_NOTES.md \
             --prerelease \
             dist/*
+
+  installer-smoke-unix:
+    name: release-installer-${{ matrix.os }}
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+    steps:
+      - name: Install from published release asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="v$RELEASE_VERSION"
+          install_dir="$RUNNER_TEMP/packrail-release-smoke"
+          export PACKRAIL_INSTALL_DIR="$install_dir"
+          curl --retry 5 --retry-delay 2 -fsSL "https://github.com/VyxorDev/packrail/releases/download/$tag/install.sh" | sh
+          "$install_dir/prl" version | grep -q "prl $RELEASE_VERSION"
+
+  installer-smoke-windows:
+    name: release-installer-windows-powershell-5.1
+    needs: release
+    runs-on: windows-latest
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+    steps:
+      - name: Install from published release asset in Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = "v$env:RELEASE_VERSION"
+          $url = "https://github.com/VyxorDev/packrail/releases/download/$tag/install.ps1"
+          $env:PACKRAIL_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'packrail-release-smoke'
+
+          $script = $null
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+              try {
+                  $script = Invoke-RestMethod -UseBasicParsing $url
+                  break
+              }
+              catch {
+                  if ($attempt -eq 5) { throw }
+                  Start-Sleep -Seconds 2
+              }
+          }
+
+          $script | Invoke-Expression
+          $output = (& (Join-Path $env:PACKRAIL_INSTALL_DIR 'prl.exe') version) -join "`n"
+          if ($output -notmatch [regex]::Escape("prl $env:RELEASE_VERSION")) {
+              throw "unexpected Packrail version: $output"
+          }
