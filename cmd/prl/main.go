@@ -14,7 +14,7 @@ import (
 	packruntimes "github.com/VyxorDev/packrail/internal/runtimes"
 )
 
-const version = "0.2.0-alpha"
+const version = "0.3.0-alpha"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -38,10 +38,16 @@ func run(args []string) error {
 		if err != nil {
 			return err
 		}
+		if _, err := registry.ArtifactFor(pkg, runtime.GOOS, runtime.GOARCH); err != nil {
+			return err
+		}
 		fmt.Printf("Resolving %s %s\n", pkg.Name, pkg.Version)
 		fmt.Printf("Source: %s\n", pkg.Source)
+		fmt.Printf("Platform: %s\n", registry.PlatformKey(runtime.GOOS, runtime.GOARCH))
 		if pkg.Runtime.Name != "" {
 			fmt.Printf("Runtime: %s %s (managed by Packrail)\n", pkg.Runtime.Name, pkg.Runtime.Constraint)
+		} else {
+			fmt.Println("Runtime: native")
 		}
 		fmt.Println("Installing...")
 		if err := install.Install(pkg); err != nil {
@@ -61,12 +67,23 @@ func run(args []string) error {
 		if err != nil {
 			return err
 		}
+		artifact, artifactErr := registry.ArtifactFor(pkg, runtime.GOOS, runtime.GOARCH)
 		fmt.Printf("%s %s\n", pkg.Name, pkg.Version)
 		fmt.Println(pkg.Description)
-		fmt.Printf("Source:  %s\n", pkg.Source)
-		fmt.Printf("Runtime: %s %s\n", pkg.Runtime.Name, pkg.Runtime.Constraint)
-		fmt.Printf("Command: %s\n", pkg.Command.Name)
-		fmt.Printf("SHA-256: %s\n", pkg.Artifact.SHA256)
+		fmt.Printf("Source:    %s\n", pkg.Source)
+		if pkg.Runtime.Name != "" {
+			fmt.Printf("Runtime:   %s %s\n", pkg.Runtime.Name, pkg.Runtime.Constraint)
+		} else {
+			fmt.Println("Runtime:   native")
+		}
+		fmt.Printf("Command:   %s\n", pkg.Command.Name)
+		fmt.Printf("Platforms: %s\n", strings.Join(registry.Platforms(pkg), ", "))
+		if artifactErr == nil {
+			fmt.Printf("Artifact:  %s (%s)\n", registry.PlatformKey(runtime.GOOS, runtime.GOARCH), artifact.Format)
+			fmt.Printf("SHA-256:   %s\n", artifact.SHA256)
+		} else {
+			fmt.Printf("Artifact:  unavailable for %s\n", registry.PlatformKey(runtime.GOOS, runtime.GOARCH))
+		}
 		return nil
 
 	case "search", "s":
@@ -210,9 +227,9 @@ func printHelp() {
 Universal package distribution for open-source software.
 
 Usage:
-  prl install <package>   Install a package and its managed runtime
+  prl install <package>   Install a package and its required runtime
   prl search [query]      Search the registry
-  prl info <package>      Show package metadata
+  prl info <package>      Show package and platform metadata
   prl list                List installed packages
   prl doctor              Check the local Packrail environment
   prl version             Print the CLI version
