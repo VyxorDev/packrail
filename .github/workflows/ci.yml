@@ -36,6 +36,33 @@ jobs:
       - name: Build prl
         run: go build ./cmd/prl
 
+  registry-smoke:
+    name: registry-smoke
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: true
+
+      - name: Build prl
+        run: go build -o prl ./cmd/prl
+
+      - name: Sync and use GitHub registry
+        env:
+          PACKRAIL_HOME: ${{ runner.temp }}/packrail-registry
+        run: |
+          ./prl registry status | grep -q 'embedded'
+          ./prl registry sync
+          ./prl registry status | grep -q 'cache'
+          test -f "$PACKRAIL_HOME/registry/packages.json"
+          ./prl search ripgrep | grep -q 'ripgrep'
+
   managed-runtime-smoke:
     name: managed-runtime-smoke
     runs-on: ubuntu-latest
