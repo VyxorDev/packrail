@@ -200,11 +200,15 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: Install with the public one-liner in Windows PowerShell 5.1
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run checked-out installer in Windows PowerShell 5.1
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
+          $env:PACKRAIL_INSTALL_VERSION = '0.8.0-alpha'
           $env:PACKRAIL_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'packrail-windows-powershell'
-          irm https://raw.githubusercontent.com/VyxorDev/packrail/main/scripts/install.ps1 | iex
+          & .\scripts\install.ps1
           $output = (& (Join-Path $env:PACKRAIL_INSTALL_DIR 'prl.exe') version) -join "`n"
           if ($output -notmatch 'prl 0.8.0-alpha') { throw "unexpected Packrail version: $output" }
