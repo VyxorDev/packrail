@@ -194,3 +194,17 @@ jobs:
           $output = (& "$env:PACKRAIL_HOME\bin\rg.cmd" --version) -join "`n"
           if ($output -notmatch 'ripgrep 15.2.0') { throw "unexpected ripgrep version: $output" }
           if (-not (Test-Path "$env:PACKRAIL_HOME\packages\ripgrep\15.2.0\.packrail.json")) { throw 'install record missing' }
+
+  windows-powershell-bootstrap-smoke:
+    name: windows-powershell-5.1-bootstrap
+    runs-on: windows-latest
+
+    steps:
+      - name: Install with the public one-liner in Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:PACKRAIL_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'packrail-windows-powershell'
+          irm https://raw.githubusercontent.com/VyxorDev/packrail/main/scripts/install.ps1 | iex
+          $output = (& (Join-Path $env:PACKRAIL_INSTALL_DIR 'prl.exe') version) -join "`n"
+          if ($output -notmatch 'prl 0.8.0-alpha') { throw "unexpected Packrail version: $output" }
