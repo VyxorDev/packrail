@@ -71,6 +71,22 @@ jobs:
           test "$(wc -l < dist/SHA256SUMS.txt)" -eq 6
           cat dist/SHA256SUMS.txt
 
+      - name: Prepare version-pinned installer assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          printf '%s\n' "\$env:PACKRAIL_INSTALL_VERSION = '$RELEASE_VERSION'" > dist/install.ps1
+          cat scripts/install.ps1 >> dist/install.ps1
+
+          printf '%s\n' "PACKRAIL_INSTALL_VERSION='$RELEASE_VERSION'" 'export PACKRAIL_INSTALL_VERSION' > dist/install.sh
+          cat scripts/install.sh >> dist/install.sh
+          chmod 755 dist/install.sh
+
+          head -n 1 dist/install.ps1 | grep -Fq "PACKRAIL_INSTALL_VERSION = '$RELEASE_VERSION'"
+          head -n 1 dist/install.sh | grep -Fq "PACKRAIL_INSTALL_VERSION='$RELEASE_VERSION'"
+          sh -n dist/install.sh
+
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -82,6 +98,7 @@ jobs:
           Packrail $tag
 
           Cross-platform prl binaries for Windows, Linux, and macOS on x64 and ARM64.
+          The release also includes version-pinned install.ps1 and install.sh bootstrap scripts.
           Verify downloaded binaries with SHA256SUMS.txt.
           EOF
 
