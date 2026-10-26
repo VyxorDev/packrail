@@ -1,0 +1,59 @@
+name: v0.8 Platform Fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/v08-platform-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+      - name: Harden platform inference
+        shell: python
+        run: |
+          from pathlib import Path
+
+          p = Path('internal/publisher/publisher.go')
+          text = p.read_text()
+          old = '''\t\tplatform := detectPlatform(raw.Name)\n\t\tif platform == "" {\n\t\t\tplatform = "any"\n\t\t}\n'''
+          new = '''\t\tplatform := detectPlatform(raw.Name)\n\t\tif platform == "" {\n\t\t\tif platformSpecificAsset(raw.Name) {\n\t\t\t\tinspection.Warnings = append(inspection.Warnings, fmt.Sprintf("%s targets an unsupported or ambiguous platform and was skipped", raw.Name))\n\t\t\t\tcontinue\n\t\t\t}\n\t\t\tplatform = "any"\n\t\t}\n'''
+          if old not in text:
+              raise SystemExit('Inspect platform marker not found')
+          text = text.replace(old, new, 1)
+
+          marker = '''func containsAny(value string, values ...string) bool {\n'''
+          helper = '''func platformSpecificAsset(name string) bool {\n\tlower := strings.ToLower(name)\n\treturn containsAny(lower,\n\t\t"windows", "win32", "win64", "pc-windows", "msvc",\n\t\t"darwin", "macos", "mac-os", "apple-darwin", "osx",\n\t\t"linux", "aarch64", "arm64", "x86_64", "amd64", "x64",\n\t\t"i686", "i386", "armv7", "armhf", "s390x", "ppc64", "riscv",\n\t)\n}\n\n'''
+          if marker not in text:
+              raise SystemExit('containsAny marker not found')
+          text = text.replace(marker, helper + marker, 1)
+          p.write_text(text)
+
+          p = Path('internal/publisher/runtime_inference.go')
+          text = p.read_text()
+          old = '''func assetPreference(asset Asset) int {\n\tname := strings.ToLower(asset.Name)\n\tif strings.HasPrefix(asset.Platform, "linux-") {\n'''
+          new = '''func assetPreference(asset Asset) int {\n\tname := strings.ToLower(asset.Name)\n\tif strings.HasPrefix(asset.Platform, "windows-") {\n\t\tswitch {\n\t\tcase strings.Contains(name, "msvc"):\n\t\t\treturn 0\n\t\tcase strings.Contains(name, "windows-gnu"):\n\t\t\treturn 1\n\t\tdefault:\n\t\t\treturn 2\n\t\t}\n\t}\n\tif strings.HasPrefix(asset.Platform, "linux-") {\n'''
+          if old not in text:
+              raise SystemExit('assetPreference marker not found')
+          p.write_text(text.replace(old, new, 1))
+      - name: Test and commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          gofmt -w internal/publisher/publisher.go internal/publisher/runtime_inference.go
+          go test ./...
+          go vet ./...
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add internal/publisher/publisher.go internal/publisher/runtime_inference.go
+          git commit -m "fix: reject unsupported release platforms"
+          git push origin HEAD:main
