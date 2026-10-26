@@ -51,4 +51,4 @@ jobs:
 
           ./prl runtime list
 
-      # This workflow is temporary v0.6 release proof and is removed after a green run.
+      # Temporary v0.6 proof: remove after the first fully green runtime run.
