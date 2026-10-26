@@ -9,10 +9,15 @@ The CLI is `prl`.
 ```powershell
 prl install starterqueue
 prl install ripgrep
+prl update ripgrep
+prl remove ripgrep
 prl search queue
 prl info ripgrep
 prl package inspect VyxorDev/starterqueue
 prl package generate VyxorDev/starterqueue
+prl package add VyxorDev/starterqueue
+prl runtime install python ">=3.11"
+prl runtime list
 prl registry status
 prl registry sync
 prl list
@@ -21,22 +26,47 @@ prl doctor
 
 ## Status
 
-Packrail is currently **v0.5-alpha**.
+Packrail is currently **v0.6-alpha**.
 
-The install path is:
+The user-side lifecycle is:
 
-`GitHub registry -> local cache -> platform resolve -> runtime resolve -> download -> SHA-256 verify -> safe extract -> shim -> run`
+`GitHub registry -> local cache -> platform resolve -> runtime resolve -> download -> verify -> safe extract -> shim -> run -> update/remove`
 
-The publisher path is beginning to look like:
+The publisher-side flow is:
 
-`GitHub repository -> latest Release -> detect artifacts -> inspect metadata -> generate Packrail package draft`
+`GitHub repository -> latest Release -> detect artifacts -> inspect metadata -> generate -> validate -> add/update registry metadata`
 
 The registry currently proves two different distribution models:
 
 - **StarterQueue** — a Node.js CLI distributed from GitHub Releases. Packrail automatically acquires and isolates a compatible Node runtime.
 - **ripgrep** — a native executable. Packrail selects the correct upstream artifact for Windows, Linux, or macOS and for x64 or ARM64.
 
-## GitHub Release inspection and package generation
+## Install, update, and remove
+
+Install a package with one command:
+
+```powershell
+prl install ripgrep
+```
+
+Update one package or every installed package:
+
+```powershell
+prl update ripgrep
+prl update
+```
+
+Remove a package:
+
+```powershell
+prl remove ripgrep
+```
+
+Packrail records each installation in `.packrail.json`. Removal uses those records instead of trying to guess which files belong to a package. Package directories and command shims are removed deterministically. Shared managed runtime caches are intentionally retained because another installed package may use them.
+
+Updates resolve the current registry version, install it through the normal verified path, then remove stale package versions. A package already at the registry version is left untouched.
+
+## GitHub Release inspection and package authoring
 
 Packrail can inspect a public GitHub repository's latest Release and classify supported `.zip`, `.tgz`, and `.tar.gz` assets by platform and architecture.
 
@@ -56,12 +86,30 @@ darwin-arm64
 any
 ```
 
-GitHub-published SHA-256 asset digests are carried into the generated package metadata.
+GitHub-published SHA-256 asset digests are carried into generated package metadata.
 
-Packrail can also generate a registry draft:
+Generate a registry draft:
 
 ```powershell
 prl package generate VyxorDev/starterqueue
+```
+
+Or generate, validate, and upsert it directly into a registry JSON file:
+
+```powershell
+prl package add VyxorDev/starterqueue
+```
+
+By default `package add` updates:
+
+```text
+internal/registry/data/packages.json
+```
+
+A different registry file can be used with:
+
+```powershell
+prl package add owner/tool --registry path/to/packages.json
 ```
 
 For npm-style `.tgz` release artifacts, Packrail reads `package/package.json` directly from the archive and can infer:
@@ -74,15 +122,15 @@ For npm-style `.tgz` release artifacts, Packrail reads `package/package.json` di
 - release artifact URL
 - SHA-256 digest
 
-That means a project can publish an npm-pack-compatible tarball to **GitHub Releases without publishing to npm**, and Packrail can still reconstruct most or all of the install metadata automatically.
+That means a project can publish an npm-pack-compatible tarball to **GitHub Releases without publishing to npm**, and Packrail can reconstruct most or all of the install metadata automatically.
 
 For native tools whose repository name differs from their executable, the command can be supplied explicitly:
 
 ```powershell
-prl package generate BurntSushi/ripgrep --command rg
+prl package add BurntSushi/ripgrep --command rg
 ```
 
-Packrail inspects release archives locally to locate matching executables. Generated output is still a draft and should be reviewed before it enters the registry.
+`package add` refuses incomplete generated definitions and validates the complete resulting registry before replacing the file. The registry file remains a normal Git-tracked artifact, so its diff can be reviewed and committed like source code.
 
 ## Live GitHub registry
 
@@ -99,11 +147,11 @@ The cache lives under:
 ~/.packrail/registry/packages.json
 ```
 
-Normal `install`, `search`, and `info` commands automatically refresh stale metadata. If GitHub is temporarily unavailable, Packrail falls back to the last valid cache. A small embedded registry snapshot remains only as a first-run/offline bootstrap.
+Normal `install`, `search`, `info`, and `update` commands can use the live/cached registry. If GitHub is temporarily unavailable, Packrail falls back to the last valid cache. A small embedded registry snapshot remains as a first-run/offline bootstrap.
 
 Remote registry downloads are validated before they can replace the cache. Packrail rejects duplicate package names, insecure artifact URLs, invalid SHA-256 values, unsupported archive formats, missing entrypoints, and incomplete package definitions.
 
-This means adding or updating a package in the GitHub registry does **not** require publishing a new Packrail binary.
+Adding or updating a package in the GitHub registry does **not** require publishing a new Packrail binary.
 
 ## Platform-aware packages
 
@@ -131,19 +179,66 @@ The user does not need Rust or Cargo. Packrail installs the appropriate prebuilt
 
 ## Managed runtimes
 
-When a package requires Node.js, Packrail can install a private runtime from the official Node.js distribution service, verify it against the release's published SHA-256 checksum, and store it under:
+Packrail's runtime manager supports four runtime families:
 
 ```text
-~/.packrail/runtimes/node/
+Node.js
+Python
+Java
+.NET
 ```
 
-That means this works even when Node is not installed globally:
+They can be acquired explicitly:
+
+```powershell
+prl runtime install node ">=20"
+prl runtime install python ">=3.11"
+prl runtime install java ">=21"
+prl runtime install dotnet ">=8"
+prl runtime list
+```
+
+Managed runtimes are stored privately under:
+
+```text
+~/.packrail/runtimes/<runtime>/
+```
+
+Packrail uses upstream runtime distributions and verifies their published checksums before installation:
+
+- Node.js — official Node.js distributions and `SHASUMS256.txt`
+- Python — portable Python Build Standalone release archives
+- Java — Eclipse Temurin JRE archives from the Adoptium API
+- .NET — Microsoft runtime archives resolved from official release metadata
+
+Node-based packages already use this automatically. For example, this works even when Node is not globally installed:
 
 ```powershell
 prl install starterqueue
 ```
 
-Generated command shims point directly to the Packrail-managed runtime instead of relying on `node` from the user's PATH.
+The generic runtime resolver is also available to package manifests for Python, Java, and .NET. Automatic publisher inference for those ecosystems is not yet as rich as the current npm/Node inference, and some package types may need additional launch metadata in future manifest revisions.
+
+## Packrail binaries
+
+Packrail's release workflow builds native `prl` binaries for:
+
+```text
+prl-windows-amd64.exe
+prl-windows-arm64.exe
+prl-linux-amd64
+prl-linux-arm64
+prl-macos-amd64
+prl-macos-arm64
+```
+
+Each binary release also includes:
+
+```text
+SHA256SUMS.txt
+```
+
+The release workflow runs the Go test suite and vet before producing binaries, then cross-compiles with `CGO_ENABLED=0`.
 
 ## Principles
 
@@ -160,7 +255,7 @@ Generated command shims point directly to the Packrail-managed runtime instead o
 
 ## Build
 
-Packrail currently targets Go 1.23+.
+Packrail targets Go 1.23+.
 
 ```bash
 go build -o prl ./cmd/prl
@@ -179,11 +274,11 @@ go test ./...
 go vet ./...
 ```
 
-CI tests Windows, Linux, and macOS. It verifies registry synchronization, GitHub Release package generation, and end-to-end installs for both a managed-runtime package (StarterQueue) and a native platform package (ripgrep).
+CI tests Windows, Linux, and macOS. It verifies registry synchronization, GitHub Release package generation/authoring, lifecycle removal/update behavior, and end-to-end installs for both a managed-runtime package (StarterQueue) and a native platform package (ripgrep).
 
 ## Current limitations
 
-The alpha installer currently supports `.tgz` and `.zip` artifacts. Managed runtime acquisition currently supports Node.js only. Package generation currently targets public GitHub Releases and relies on GitHub-provided SHA-256 digests. Updates, removals, direct GitHub installs, additional runtime families, one-command registry submission, and richer package formats are planned next.
+Packrail remains alpha software. Package artifacts currently support `.tgz` and `.zip`. Runtime constraints currently resolve minimum compatible versions rather than implementing a complete ecosystem-specific constraint grammar. GitHub Release package generation currently focuses on public Releases and has the richest automatic inference for npm-style Node CLIs and conventional native binaries. Java packages that require special launch flags such as `-jar`, Python packaging conventions beyond executable scripts, direct `github:owner/repo` installs, runtime garbage collection, transactional rollback across every filesystem failure, and richer package formats still need additional work.
 
 ## License
 
