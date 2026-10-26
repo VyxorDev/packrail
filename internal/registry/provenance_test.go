@@ -30,3 +30,10 @@ func TestValidateGitHubProvenanceRejectsForeignArtifact(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestVerifyPublisherOnlineAcceptsPersonalRepoOwnerWithoutNetwork(t *testing.T) {
+	pkg := testPackage("demo", "1.0.0", "https://github.com/example/demo")
+	if err := VerifyPublisherOnline(pkg, "Example", ""); err != nil {
+		t.Fatal(err)
+	}
+}
