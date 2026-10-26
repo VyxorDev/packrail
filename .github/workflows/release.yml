@@ -36,7 +36,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
-          cache: true
+          cache: false
 
       - name: Validate release intent
         shell: bash
@@ -67,7 +67,9 @@ jobs:
           build darwin amd64 prl-macos-amd64
           build darwin arm64 prl-macos-arm64
 
+          ./dist/prl-linux-amd64 version | grep -q "prl $RELEASE_VERSION"
           (cd dist && sha256sum prl-* > SHA256SUMS.txt)
+          test "$(wc -l < dist/SHA256SUMS.txt)" -eq 6
           ls -lh dist
           cat dist/SHA256SUMS.txt
 
@@ -78,15 +80,25 @@ jobs:
         run: |
           set -euo pipefail
           tag="v$RELEASE_VERSION"
-          notes="Packrail $tag\n\nCross-platform prl binaries for Windows, Linux, and macOS on x64 and ARM64. Verify downloads with SHA256SUMS.txt."
+          cat > RELEASE_NOTES.md <<EOF
+          Packrail $tag makes the project usable end-to-end.
+
+          - Package authoring: prl package add can generate, validate, and upsert GitHub Release metadata into a Packrail registry.
+          - Lifecycle: prl update and prl remove manage installed packages from Packrail install records.
+          - Distribution: native prl binaries are published for Windows, Linux, and macOS on x64 and ARM64.
+          - Managed runtimes: Node.js, Python, Eclipse Temurin Java, and .NET can be acquired and checksum-verified under the private Packrail runtime store.
+
+          Verify downloaded binaries with SHA256SUMS.txt.
+          EOF
 
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" dist/* --clobber
+            gh release edit "$tag" --notes-file RELEASE_NOTES.md --title "Packrail $tag" --prerelease
           else
             gh release create "$tag" \
               --target "$GITHUB_SHA" \
               --title "Packrail $tag" \
-              --notes "$notes" \
+              --notes-file RELEASE_NOTES.md \
               --prerelease \
               dist/*
           fi
