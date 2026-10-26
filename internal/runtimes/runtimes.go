@@ -418,7 +418,7 @@ func ensureDotnet(home, constraint string) (Result, error) {
 		files = releases.Releases[0].Runtime.Files
 	}
 	for _, file := range files {
-		if file.RID != rid || strings.TrimSpace(file.URL) == "" || strings.TrimSpace(file.Hash) == "" {
+		if file.RID != rid || !strings.HasPrefix(file.Name, "dotnet-runtime-") || strings.TrimSpace(file.URL) == "" || strings.TrimSpace(file.Hash) == "" {
 			continue
 		}
 		format := archiveFormat(file.Name)
