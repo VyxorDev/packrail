@@ -157,6 +157,7 @@ func Update(pkg registry.Package) (from []string, changed bool, err error) {
 			if err := os.RemoveAll(filepath.Join(packageRoot, entry.Name())); err != nil {
 				return from, false, fmt.Errorf("remove old version %s: %w", entry.Name(), err)
 			}
+		}
 	}
 	return from, true, nil
 }
