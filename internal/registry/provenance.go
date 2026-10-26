@@ -1,0 +1,114 @@
+package registry
+
+import (
+	"fmt"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+)
+
+var verifyHTTPClient = &http.Client{Timeout: 30 * time.Second}
+
+// ValidateGitHubProvenance binds a registry package to one GitHub repository.
+// Registry submissions may not point at artifacts owned by a different repo.
+func ValidateGitHubProvenance(pkg Package) error {
+	owner, repo, err := githubRepoFromURL(pkg.Source)
+	if err != nil {
+		return fmt.Errorf("package %s source: %w", pkg.Name, err)
+	}
+	for platform, artifact := range pkg.Artifacts {
+		artifactOwner, artifactRepo, err := githubReleaseRepo(artifact.URL)
+		if err != nil {
+			return fmt.Errorf("package %s artifact %s: %w", pkg.Name, platform, err)
+		}
+		if !strings.EqualFold(owner, artifactOwner) || !strings.EqualFold(repo, artifactRepo) {
+			return fmt.Errorf("package %s artifact %s belongs to %s/%s, but source is %s/%s", pkg.Name, platform, artifactOwner, artifactRepo, owner, repo)
+		}
+	}
+	return nil
+}
+
+// VerifyPackageOnline checks that the source repository and every declared
+// release artifact are currently reachable. Checksums remain the integrity
+// authority during installation; this only catches dead or fabricated URLs.
+func VerifyPackageOnline(pkg Package) error {
+	if err := ValidateGitHubProvenance(pkg); err != nil {
+		return err
+	}
+	if err := verifyURL(pkg.Source); err != nil {
+		return fmt.Errorf("source %s: %w", pkg.Source, err)
+	}
+	for platform, artifact := range pkg.Artifacts {
+		if err := verifyURL(artifact.URL); err != nil {
+			return fmt.Errorf("artifact %s %s: %w", platform, artifact.URL, err)
+		}
+	}
+	return nil
+}
+
+func verifyURL(value string) error {
+	req, err := http.NewRequest(http.MethodHead, value, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", "Packrail/prl")
+	resp, err := verifyHTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+		return nil
+	}
+	// Some download endpoints do not implement HEAD consistently. Retry with a
+	// one-byte range GET without downloading the full asset.
+	if resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusForbidden {
+		getReq, getErr := http.NewRequest(http.MethodGet, value, nil)
+		if getErr != nil {
+			return getErr
+		}
+		getReq.Header.Set("User-Agent", "Packrail/prl")
+		getReq.Header.Set("Range", "bytes=0-0")
+		getResp, getErr := verifyHTTPClient.Do(getReq)
+		if getErr != nil {
+			return getErr
+		}
+		defer getResp.Body.Close()
+		if getResp.StatusCode >= 200 && getResp.StatusCode < 400 {
+			return nil
+		}
+		return fmt.Errorf("HTTP %s", getResp.Status)
+	}
+	return fmt.Errorf("HTTP %s", resp.Status)
+}
+
+func githubRepoFromURL(value string) (string, string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil {
+		return "", "", err
+	}
+	if !strings.EqualFold(parsed.Scheme, "https") || !strings.EqualFold(parsed.Host, "github.com") {
+		return "", "", fmt.Errorf("must be an HTTPS github.com repository URL")
+	}
+	parts := strings.Split(strings.Trim(strings.TrimSuffix(parsed.Path, ".git"), "/"), "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", fmt.Errorf("must identify exactly one GitHub repository")
+	}
+	return parts[0], parts[1], nil
+}
+
+func githubReleaseRepo(value string) (string, string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil {
+		return "", "", err
+	}
+	if !strings.EqualFold(parsed.Scheme, "https") || !strings.EqualFold(parsed.Host, "github.com") {
+		return "", "", fmt.Errorf("must be an HTTPS github.com release asset URL")
+	}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(parts) < 5 || parts[0] == "" || parts[1] == "" || parts[2] != "releases" || parts[3] != "download" {
+		return "", "", fmt.Errorf("must be a GitHub Releases download URL")
+	}
+	return parts[0], parts[1], nil
+}
