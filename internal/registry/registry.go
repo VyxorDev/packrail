@@ -4,6 +4,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -17,24 +18,25 @@ type Runtime struct {
 }
 
 type Artifact struct {
-	URL    string `json:"url"`
-	SHA256 string `json:"sha256"`
-	Format string `json:"format"`
+	URL        string `json:"url"`
+	SHA256     string `json:"sha256"`
+	Format     string `json:"format"`
+	Entrypoint string `json:"entrypoint,omitempty"`
 }
 
 type Command struct {
 	Name       string `json:"name"`
-	Entrypoint string `json:"entrypoint"`
+	Entrypoint string `json:"entrypoint,omitempty"`
 }
 
 type Package struct {
-	Name        string   `json:"name"`
-	Version     string   `json:"version"`
-	Description string   `json:"description"`
-	Source      string   `json:"source"`
-	Runtime     Runtime  `json:"runtime"`
-	Artifact    Artifact `json:"artifact"`
-	Command     Command  `json:"command"`
+	Name        string              `json:"name"`
+	Version     string              `json:"version"`
+	Description string              `json:"description"`
+	Source      string              `json:"source"`
+	Runtime     Runtime             `json:"runtime,omitempty"`
+	Artifacts   map[string]Artifact `json:"artifacts"`
+	Command     Command             `json:"command"`
 }
 
 func All() ([]Package, error) {
@@ -79,4 +81,43 @@ func Search(query string) ([]Package, error) {
 		}
 	}
 	return matches, nil
+}
+
+func PlatformKey(goos, goarch string) string {
+	return strings.ToLower(strings.TrimSpace(goos)) + "-" + strings.ToLower(strings.TrimSpace(goarch))
+}
+
+func ArtifactFor(pkg Package, goos, goarch string) (Artifact, error) {
+	key := PlatformKey(goos, goarch)
+	artifact, ok := pkg.Artifacts[key]
+	if !ok {
+		artifact, ok = pkg.Artifacts["any"]
+	}
+	if !ok {
+		return Artifact{}, fmt.Errorf("package %s %s does not support %s", pkg.Name, pkg.Version, key)
+	}
+	if strings.TrimSpace(artifact.URL) == "" || strings.TrimSpace(artifact.SHA256) == "" || strings.TrimSpace(artifact.Format) == "" {
+		return Artifact{}, fmt.Errorf("package %s has an incomplete artifact definition for %s", pkg.Name, key)
+	}
+	return artifact, nil
+}
+
+func EntrypointFor(pkg Package, artifact Artifact) (string, error) {
+	entrypoint := strings.TrimSpace(artifact.Entrypoint)
+	if entrypoint == "" {
+		entrypoint = strings.TrimSpace(pkg.Command.Entrypoint)
+	}
+	if entrypoint == "" {
+		return "", fmt.Errorf("package %s does not define an entrypoint", pkg.Name)
+	}
+	return entrypoint, nil
+}
+
+func Platforms(pkg Package) []string {
+	platforms := make([]string, 0, len(pkg.Artifacts))
+	for platform := range pkg.Artifacts {
+		platforms = append(platforms, platform)
+	}
+	sort.Strings(platforms)
+	return platforms
 }
