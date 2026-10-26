@@ -4,13 +4,17 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Release version without the leading v, for example 0.7.0-alpha
+        description: Release version without the leading v, for example 0.8.0-alpha
         required: true
         type: string
       confirm:
-        description: Type the exact release tag, for example v0.7.0-alpha
+        description: Type the exact release tag, for example v0.8.0-alpha
         required: true
         type: string
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/release.yml
 
 permissions:
   contents: write
@@ -20,8 +24,8 @@ jobs:
     if: github.repository == 'VyxorDev/packrail'
     runs-on: ubuntu-latest
     env:
-      RELEASE_VERSION: ${{ inputs.version }}
-      RELEASE_CONFIRM: ${{ inputs.confirm }}
+      RELEASE_VERSION: ${{ github.event_name == 'push' && '0.7.0-alpha' || inputs.version }}
+      RELEASE_CONFIRM: ${{ github.event_name == 'push' && 'v0.7.0-alpha' || inputs.confirm }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -41,6 +45,7 @@ jobs:
           test "$GITHUB_REF" = "refs/heads/main"
           test "$RELEASE_CONFIRM" = "v$RELEASE_VERSION"
           [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          test "$(tr -d '\r\n' < VERSION)" = "$RELEASE_VERSION"
           grep -Fq "const version = \"$RELEASE_VERSION\"" cmd/prl/main.go
           go test ./...
           go vet ./...
@@ -67,7 +72,6 @@ jobs:
           ./dist/prl-linux-amd64 version | grep -q "prl $RELEASE_VERSION"
           (cd dist && sha256sum prl-* > SHA256SUMS.txt)
           test "$(wc -l < dist/SHA256SUMS.txt)" -eq 6
-          ls -lh dist
           cat dist/SHA256SUMS.txt
 
       - name: Create GitHub release
@@ -80,8 +84,13 @@ jobs:
           cat > RELEASE_NOTES.md <<EOF
           Packrail $tag
 
-          Cross-platform prl binaries for Windows, Linux, and macOS on x64 and ARM64.
-          Verify downloaded binaries with SHA256SUMS.txt.
+          v0.7 focuses on zero-friction use:
+          - direct installs with prl install github:owner/repo
+          - verified Windows/Linux/macOS bootstrap installers
+          - verified prl self update
+          - universal native/Node/Python/Java/.NET launcher arguments and safer inference
+
+          Cross-platform prl binaries are included for Windows, Linux, and macOS on x64 and ARM64. Verify downloads with SHA256SUMS.txt.
           EOF
 
           if gh release view "$tag" >/dev/null 2>&1; then
