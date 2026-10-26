@@ -8,13 +8,14 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/VyxorDev/packrail/internal/install"
 	"github.com/VyxorDev/packrail/internal/registry"
 	packruntimes "github.com/VyxorDev/packrail/internal/runtimes"
 )
 
-const version = "0.3.0-alpha"
+const version = "0.4.0-alpha"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -34,6 +35,7 @@ func run(args []string) error {
 		if len(args) != 2 {
 			return fmt.Errorf("usage: prl install <package>")
 		}
+		refreshRegistry()
 		pkg, err := registry.Find(args[1])
 		if err != nil {
 			return err
@@ -63,6 +65,7 @@ func run(args []string) error {
 		if len(args) != 2 {
 			return fmt.Errorf("usage: prl info <package>")
 		}
+		refreshRegistry()
 		pkg, err := registry.Find(args[1])
 		if err != nil {
 			return err
@@ -87,6 +90,7 @@ func run(args []string) error {
 		return nil
 
 	case "search", "s":
+		refreshRegistry()
 		query := ""
 		if len(args) > 1 {
 			query = strings.Join(args[1:], " ")
@@ -104,6 +108,9 @@ func run(args []string) error {
 		}
 		return nil
 
+	case "registry":
+		return registryCommand(args[1:])
+
 	case "list", "ls":
 		return listInstalled()
 
@@ -120,6 +127,53 @@ func run(args []string) error {
 
 	default:
 		return fmt.Errorf("unknown command %q; run 'prl help'", args[0])
+	}
+}
+
+func registryCommand(args []string) error {
+	if len(args) == 0 || args[0] == "status" {
+		if len(args) > 1 {
+			return fmt.Errorf("usage: prl registry status")
+		}
+		status, err := registry.Status()
+		if err != nil {
+			return err
+		}
+		printRegistryStatus(status)
+		return nil
+	}
+
+	if args[0] == "sync" {
+		if len(args) != 1 {
+			return fmt.Errorf("usage: prl registry sync")
+		}
+		fmt.Println("Syncing registry from GitHub...")
+		status, err := registry.Sync()
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Synced %d packages.\n", status.PackageCount)
+		fmt.Printf("Cache: %s\n", status.CachePath)
+		return nil
+	}
+
+	return fmt.Errorf("unknown registry command %q; use 'prl registry status' or 'prl registry sync'", args[0])
+}
+
+func printRegistryStatus(status registry.StatusInfo) {
+	fmt.Printf("Registry source:   %s\n", status.Source)
+	fmt.Printf("Registry URL:      %s\n", status.URL)
+	fmt.Printf("Packages:          %d\n", status.PackageCount)
+	fmt.Printf("Cache:             %s\n", status.CachePath)
+	if !status.UpdatedAt.IsZero() {
+		fmt.Printf("Cache updated:     %s\n", status.UpdatedAt.UTC().Format(time.RFC3339))
+		fmt.Printf("Cache age:         %s\n", status.Age.Round(time.Second))
+	}
+}
+
+func refreshRegistry() {
+	if err := registry.RefreshIfStale(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: registry refresh failed; using last valid local registry: %v\n", err)
 	}
 }
 
@@ -196,6 +250,11 @@ func doctor() error {
 		fmt.Println("PATH:     Packrail bin directory is not on PATH")
 	}
 
+	status, err := registry.Status()
+	if err == nil {
+		fmt.Printf("Registry: %s (%d packages)\n", status.Source, status.PackageCount)
+	}
+
 	nodeVersions, err := packruntimes.InstalledVersions(home, "node")
 	if err != nil {
 		return err
@@ -228,8 +287,10 @@ Universal package distribution for open-source software.
 
 Usage:
   prl install <package>   Install a package and its required runtime
-  prl search [query]      Search the registry
+  prl search [query]      Search the GitHub-backed registry
   prl info <package>      Show package and platform metadata
+  prl registry status     Show registry source and cache state
+  prl registry sync       Force-sync package metadata from GitHub
   prl list                List installed packages
   prl doctor              Check the local Packrail environment
   prl version             Print the CLI version
