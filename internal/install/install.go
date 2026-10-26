@@ -2,6 +2,7 @@ package install
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
@@ -24,6 +25,8 @@ type InstallRecord struct {
 	Version        string `json:"version"`
 	Command        string `json:"command"`
 	Source         string `json:"source"`
+	Platform       string `json:"platform"`
+	ArtifactSHA256 string `json:"artifact_sha256"`
 	Runtime        string `json:"runtime,omitempty"`
 	RuntimeVersion string `json:"runtime_version,omitempty"`
 	ManagedRuntime bool   `json:"managed_runtime,omitempty"`
@@ -42,8 +45,16 @@ func Home() (string, error) {
 }
 
 func Install(pkg registry.Package) error {
-	if pkg.Artifact.Format != "tgz" {
-		return fmt.Errorf("unsupported artifact format %q", pkg.Artifact.Format)
+	artifact, err := registry.ArtifactFor(pkg, runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return err
+	}
+	entrypoint, err := registry.EntrypointFor(pkg, artifact)
+	if err != nil {
+		return err
+	}
+	if artifact.Format != "tgz" && artifact.Format != "zip" {
+		return fmt.Errorf("unsupported artifact format %q", artifact.Format)
 	}
 
 	home, err := Home()
@@ -64,14 +75,30 @@ func Install(pkg registry.Package) error {
 		return fmt.Errorf("prepare %s runtime: %w", pkg.Runtime.Name, err)
 	}
 
-	tmp, err := os.CreateTemp(stagingDir, pkg.Name+"-*.tgz")
+	tmp, err := os.CreateTemp(stagingDir, pkg.Name+"-*.")+func() string {
+		if artifact.Format == "zip" {
+			return "zip"
+		}
+		return "tgz"
+	}()
+	_ = tmp
+	_ = err
+	return installArtifact(pkg, artifact, entrypoint, runtimeResult, home, packagesDir, binDir, stagingDir)
+}
+
+func installArtifact(pkg registry.Package, artifact registry.Artifact, entrypoint string, runtimeResult packruntimes.Result, home, packagesDir, binDir, stagingDir string) error {
+	suffix := ".tgz"
+	if artifact.Format == "zip" {
+		suffix = ".zip"
+	}
+	tmp, err := os.CreateTemp(stagingDir, pkg.Name+"-*"+suffix)
 	if err != nil {
 		return fmt.Errorf("create temporary download: %w", err)
 	}
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
 
-	if err := downloadAndVerify(pkg.Artifact.URL, pkg.Artifact.SHA256, tmp); err != nil {
+	if err := downloadAndVerify(artifact.URL, artifact.SHA256, tmp); err != nil {
 		tmp.Close()
 		return err
 	}
@@ -86,12 +113,17 @@ func Install(pkg registry.Package) error {
 	}
 	defer os.RemoveAll(stagePackageDir)
 
-	if err := extractTGZ(tmpPath, stagePackageDir); err != nil {
+	if err := extractArchive(tmpPath, stagePackageDir, artifact.Format); err != nil {
 		return err
 	}
-	entry := filepath.Join(stagePackageDir, filepath.FromSlash(pkg.Command.Entrypoint))
+	entry := filepath.Join(stagePackageDir, filepath.FromSlash(entrypoint))
 	if info, err := os.Stat(entry); err != nil || info.IsDir() {
-		return fmt.Errorf("package entrypoint %q was not found in artifact", pkg.Command.Entrypoint)
+		return fmt.Errorf("package entrypoint %q was not found in artifact", entrypoint)
+	}
+	if runtimeResult.Executable == "" && runtime.GOOS != "windows" {
+		if err := os.Chmod(entry, 0o755); err != nil {
+			return fmt.Errorf("mark native entrypoint executable: %w", err)
+		}
 	}
 
 	if err := os.MkdirAll(filepath.Dir(finalDir), 0o755); err != nil {
@@ -104,10 +136,10 @@ func Install(pkg registry.Package) error {
 		return fmt.Errorf("commit installation: %w", err)
 	}
 
-	if err := writeRecord(finalDir, pkg, runtimeResult); err != nil {
+	if err := writeRecord(finalDir, pkg, artifact, runtimeResult); err != nil {
 		return err
 	}
-	if err := writeShim(binDir, finalDir, pkg, runtimeResult.Executable); err != nil {
+	if err := writeShim(binDir, finalDir, pkg, entrypoint, runtimeResult.Executable); err != nil {
 		return err
 	}
 	return nil
@@ -115,7 +147,12 @@ func Install(pkg registry.Package) error {
 
 func downloadAndVerify(url, expected string, dst *os.File) error {
 	client := &http.Client{Timeout: 2 * time.Minute}
-	resp, err := client.Get(url)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("create artifact request: %w", err)
+	}
+	req.Header.Set("User-Agent", "Packrail/prl")
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("download artifact: %w", err)
 	}
@@ -133,6 +170,17 @@ func downloadAndVerify(url, expected string, dst *os.File) error {
 		return fmt.Errorf("SHA-256 mismatch: expected %s, got %s", expected, actual)
 	}
 	return nil
+}
+
+func extractArchive(archivePath, destination, format string) error {
+	switch format {
+	case "tgz":
+		return extractTGZ(archivePath, destination)
+	case "zip":
+		return extractZIP(archivePath, destination)
+	default:
+		return fmt.Errorf("unsupported artifact format %q", format)
+	}
 }
 
 func extractTGZ(archivePath, destination string) error {
@@ -160,18 +208,9 @@ func extractTGZ(archivePath, destination string) error {
 		if err != nil {
 			return fmt.Errorf("read archive: %w", err)
 		}
-
-		cleanName := filepath.Clean(filepath.FromSlash(header.Name))
-		if cleanName == "." || filepath.IsAbs(cleanName) || cleanName == ".." || strings.HasPrefix(cleanName, ".."+string(os.PathSeparator)) {
-			return fmt.Errorf("unsafe archive path %q", header.Name)
-		}
-		target := filepath.Join(root, cleanName)
-		resolved, err := filepath.Abs(target)
+		resolved, err := safeArchiveTarget(root, header.Name)
 		if err != nil {
-			return fmt.Errorf("resolve archive path: %w", err)
-		}
-		if resolved != root && !strings.HasPrefix(resolved, root+string(os.PathSeparator)) {
-			return fmt.Errorf("archive path escapes destination: %q", header.Name)
+			return err
 		}
 
 		switch header.Typeflag {
@@ -183,7 +222,11 @@ func extractTGZ(archivePath, destination string) error {
 			if err := os.MkdirAll(filepath.Dir(resolved), 0o755); err != nil {
 				return fmt.Errorf("create parent directory: %w", err)
 			}
-			out, err := os.OpenFile(resolved, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(header.Mode)&0o777)
+			mode := os.FileMode(header.Mode) & 0o777
+			if mode == 0 {
+				mode = 0o644
+			}
+			out, err := os.OpenFile(resolved, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
 			if err != nil {
 				return fmt.Errorf("create extracted file %q: %w", header.Name, err)
 			}
@@ -204,12 +247,89 @@ func extractTGZ(archivePath, destination string) error {
 	return nil
 }
 
-func writeRecord(finalDir string, pkg registry.Package, runtimeResult packruntimes.Result) error {
+func extractZIP(archivePath, destination string) error {
+	reader, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return fmt.Errorf("open zip archive: %w", err)
+	}
+	defer reader.Close()
+	root, err := filepath.Abs(destination)
+	if err != nil {
+		return fmt.Errorf("resolve extraction root: %w", err)
+	}
+
+	for _, file := range reader.File {
+		resolved, err := safeArchiveTarget(root, file.Name)
+		if err != nil {
+			return err
+		}
+		info := file.FileInfo()
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("links are not allowed in Packrail archives: %q", file.Name)
+		}
+		if info.IsDir() {
+			if err := os.MkdirAll(resolved, 0o755); err != nil {
+				return fmt.Errorf("create directory %q: %w", file.Name, err)
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(resolved), 0o755); err != nil {
+			return fmt.Errorf("create parent directory: %w", err)
+		}
+		src, err := file.Open()
+		if err != nil {
+			return fmt.Errorf("open zip entry %q: %w", file.Name, err)
+		}
+		mode := info.Mode().Perm()
+		if mode == 0 {
+			mode = 0o644
+		}
+		out, err := os.OpenFile(resolved, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+		if err != nil {
+			src.Close()
+			return fmt.Errorf("create extracted file %q: %w", file.Name, err)
+		}
+		_, copyErr := io.Copy(out, src)
+		closeOutErr := out.Close()
+		closeSrcErr := src.Close()
+		if copyErr != nil {
+			return fmt.Errorf("extract file %q: %w", file.Name, copyErr)
+		}
+		if closeOutErr != nil {
+			return fmt.Errorf("close extracted file %q: %w", file.Name, closeOutErr)
+		}
+		if closeSrcErr != nil {
+			return fmt.Errorf("close zip entry %q: %w", file.Name, closeSrcErr)
+		}
+	}
+	return nil
+}
+
+func safeArchiveTarget(root, name string) (string, error) {
+	normalized := strings.ReplaceAll(name, "\\", "/")
+	cleanName := filepath.Clean(filepath.FromSlash(normalized))
+	if cleanName == "." || filepath.IsAbs(cleanName) || cleanName == ".." || strings.HasPrefix(cleanName, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("unsafe archive path %q", name)
+	}
+	target := filepath.Join(root, cleanName)
+	resolved, err := filepath.Abs(target)
+	if err != nil {
+		return "", fmt.Errorf("resolve archive path: %w", err)
+	}
+	if resolved != root && !strings.HasPrefix(resolved, root+string(os.PathSeparator)) {
+		return "", fmt.Errorf("archive path escapes destination: %q", name)
+	}
+	return resolved, nil
+}
+
+func writeRecord(finalDir string, pkg registry.Package, artifact registry.Artifact, runtimeResult packruntimes.Result) error {
 	record := InstallRecord{
 		Name:           pkg.Name,
 		Version:        pkg.Version,
 		Command:        pkg.Command.Name,
 		Source:         pkg.Source,
+		Platform:       registry.PlatformKey(runtime.GOOS, runtime.GOARCH),
+		ArtifactSHA256: artifact.SHA256,
 		Runtime:        pkg.Runtime.Name,
 		RuntimeVersion: runtimeResult.Version,
 		ManagedRuntime: runtimeResult.Managed,
@@ -225,8 +345,8 @@ func writeRecord(finalDir string, pkg registry.Package, runtimeResult packruntim
 	return nil
 }
 
-func writeShim(binDir, finalDir string, pkg registry.Package, runtimeExecutable string) error {
-	entry := filepath.Join(finalDir, filepath.FromSlash(pkg.Command.Entrypoint))
+func writeShim(binDir, finalDir string, pkg registry.Package, entrypoint, runtimeExecutable string) error {
+	entry := filepath.Join(finalDir, filepath.FromSlash(entrypoint))
 	if runtime.GOOS == "windows" {
 		shim := filepath.Join(binDir, pkg.Command.Name+".cmd")
 		var content string
