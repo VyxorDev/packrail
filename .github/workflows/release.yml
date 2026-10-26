@@ -11,10 +11,6 @@ on:
         description: Type the exact release tag, for example v0.8.0-alpha
         required: true
         type: string
-  push:
-    branches: [main]
-    paths:
-      - .github/workflows/release.yml
 
 permissions:
   contents: write
@@ -24,8 +20,8 @@ jobs:
     if: github.repository == 'VyxorDev/packrail'
     runs-on: ubuntu-latest
     env:
-      RELEASE_VERSION: ${{ github.event_name == 'push' && '0.7.0-alpha' || inputs.version }}
-      RELEASE_CONFIRM: ${{ github.event_name == 'push' && 'v0.7.0-alpha' || inputs.confirm }}
+      RELEASE_VERSION: ${{ inputs.version }}
+      RELEASE_CONFIRM: ${{ inputs.confirm }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -84,13 +80,8 @@ jobs:
           cat > RELEASE_NOTES.md <<EOF
           Packrail $tag
 
-          v0.7 focuses on zero-friction use:
-          - direct installs with prl install github:owner/repo
-          - verified Windows/Linux/macOS bootstrap installers
-          - verified prl self update
-          - universal native/Node/Python/Java/.NET launcher arguments and safer inference
-
-          Cross-platform prl binaries are included for Windows, Linux, and macOS on x64 and ARM64. Verify downloads with SHA256SUMS.txt.
+          Cross-platform prl binaries for Windows, Linux, and macOS on x64 and ARM64.
+          Verify downloaded binaries with SHA256SUMS.txt.
           EOF
 
           if gh release view "$tag" >/dev/null 2>&1; then
