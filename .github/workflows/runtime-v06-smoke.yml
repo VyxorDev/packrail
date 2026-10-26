@@ -1,0 +1,51 @@
+name: Runtime v0.6 Smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/runtime-v06-smoke.yml
+
+permissions:
+  contents: read
+
+jobs:
+  managed-runtimes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: true
+
+      - name: Build prl
+        run: go build -o prl ./cmd/prl
+
+      - name: Install and execute Python Java and .NET
+        env:
+          PACKRAIL_HOME: ${{ runner.temp }}/packrail-runtimes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python_out="$(./prl runtime install python '>=3.11')"
+          echo "$python_out"
+          python_exe="$(printf '%s\n' "$python_out" | sed -n 's/^Executable: //p')"
+          test -x "$python_exe"
+          "$python_exe" --version
+
+          java_out="$(./prl runtime install java '>=21')"
+          echo "$java_out"
+          java_exe="$(printf '%s\n' "$java_out" | sed -n 's/^Executable: //p')"
+          test -x "$java_exe"
+          "$java_exe" -version
+
+          dotnet_out="$(./prl runtime install dotnet '>=8')"
+          echo "$dotnet_out"
+          dotnet_exe="$(printf '%s\n' "$dotnet_out" | sed -n 's/^Executable: //p')"
+          test -x "$dotnet_exe"
+          "$dotnet_exe" --info
+
+          ./prl runtime list
