@@ -116,6 +116,10 @@ func (c *Client) Inspect(repoInput string) (Inspection, error) {
 		}
 		platform := detectPlatform(raw.Name)
 		if platform == "" {
+			if platformSpecificAsset(raw.Name) {
+				inspection.Warnings = append(inspection.Warnings, fmt.Sprintf("%s targets an unsupported or ambiguous platform and was skipped", raw.Name))
+				continue
+			}
 			platform = "any"
 		}
 		digest := strings.TrimPrefix(strings.TrimSpace(raw.Digest), "sha256:")
@@ -475,6 +479,16 @@ func detectPlatform(name string) string {
 		return ""
 	}
 	return osName + "-" + arch
+}
+
+func platformSpecificAsset(name string) bool {
+	lower := strings.ToLower(name)
+	return containsAny(lower,
+		"windows", "win32", "win64", "pc-windows", "msvc",
+		"darwin", "macos", "mac-os", "apple-darwin", "osx",
+		"linux", "aarch64", "arm64", "x86_64", "amd64", "x64",
+		"i686", "i386", "armv7", "armhf", "s390x", "ppc64", "riscv",
+	)
 }
 
 func containsAny(value string, values ...string) bool {

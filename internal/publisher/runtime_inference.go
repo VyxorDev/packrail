@@ -60,6 +60,16 @@ func preferredAssets(assets []Asset) ([]Asset, []string) {
 
 func assetPreference(asset Asset) int {
 	name := strings.ToLower(asset.Name)
+	if strings.HasPrefix(asset.Platform, "windows-") {
+		switch {
+		case strings.Contains(name, "msvc"):
+			return 0
+		case strings.Contains(name, "windows-gnu"):
+			return 1
+		default:
+			return 2
+		}
+	}
 	if strings.HasPrefix(asset.Platform, "linux-") {
 		switch {
 		case strings.Contains(name, "unknown-linux-gnu"), strings.Contains(name, "linux-gnu"):
