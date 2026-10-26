@@ -11,6 +11,8 @@ prl install starterqueue
 prl install ripgrep
 prl search queue
 prl info ripgrep
+prl package inspect VyxorDev/starterqueue
+prl package generate VyxorDev/starterqueue
 prl registry status
 prl registry sync
 prl list
@@ -19,20 +21,72 @@ prl doctor
 
 ## Status
 
-Packrail is currently **v0.4-alpha**.
+Packrail is currently **v0.5-alpha**.
 
 The install path is:
 
 `GitHub registry -> local cache -> platform resolve -> runtime resolve -> download -> SHA-256 verify -> safe extract -> shim -> run`
+
+The publisher path is beginning to look like:
+
+`GitHub repository -> latest Release -> detect artifacts -> inspect metadata -> generate Packrail package draft`
 
 The registry currently proves two different distribution models:
 
 - **StarterQueue** — a Node.js CLI distributed from GitHub Releases. Packrail automatically acquires and isolates a compatible Node runtime.
 - **ripgrep** — a native executable. Packrail selects the correct upstream artifact for Windows, Linux, or macOS and for x64 or ARM64.
 
+## GitHub Release inspection and package generation
+
+Packrail can inspect a public GitHub repository's latest Release and classify supported `.zip`, `.tgz`, and `.tar.gz` assets by platform and architecture.
+
+```powershell
+prl package inspect BurntSushi/ripgrep
+```
+
+It recognizes common release naming conventions for:
+
+```text
+windows-amd64
+windows-arm64
+linux-amd64
+linux-arm64
+darwin-amd64
+darwin-arm64
+any
+```
+
+GitHub-published SHA-256 asset digests are carried into the generated package metadata.
+
+Packrail can also generate a registry draft:
+
+```powershell
+prl package generate VyxorDev/starterqueue
+```
+
+For npm-style `.tgz` release artifacts, Packrail reads `package/package.json` directly from the archive and can infer:
+
+- package name and version
+- description
+- CLI command
+- CLI entrypoint
+- Node.js version requirement
+- release artifact URL
+- SHA-256 digest
+
+That means a project can publish an npm-pack-compatible tarball to **GitHub Releases without publishing to npm**, and Packrail can still reconstruct most or all of the install metadata automatically.
+
+For native tools whose repository name differs from their executable, the command can be supplied explicitly:
+
+```powershell
+prl package generate BurntSushi/ripgrep --command rg
+```
+
+Packrail inspects release archives locally to locate matching executables. Generated output is still a draft and should be reviewed before it enters the registry.
+
 ## Live GitHub registry
 
-Package metadata is no longer locked inside a specific `prl` build. Packrail treats the registry stored in this GitHub repository as the authoritative source and caches the last valid copy locally.
+Package metadata is not locked inside a specific `prl` build. Packrail treats the registry stored in this GitHub repository as the authoritative source and caches the last valid copy locally.
 
 ```powershell
 prl registry sync
@@ -102,6 +156,7 @@ Generated command shims point directly to the Packrail-managed runtime instead o
 - No arbitrary post-install scripts in the package format.
 - Language runtimes should be invisible implementation details whenever Packrail can manage them safely.
 - Platform differences should be solved by the registry and resolver, not by the user.
+- Publishing should begin from metadata projects already have, not from ecosystem-specific bureaucracy.
 
 ## Build
 
@@ -124,11 +179,11 @@ go test ./...
 go vet ./...
 ```
 
-CI tests Windows, Linux, and macOS. It verifies registry synchronization and performs end-to-end installs for both a managed-runtime package (StarterQueue) and a native platform package (ripgrep).
+CI tests Windows, Linux, and macOS. It verifies registry synchronization, GitHub Release package generation, and end-to-end installs for both a managed-runtime package (StarterQueue) and a native platform package (ripgrep).
 
 ## Current limitations
 
-The alpha installer currently supports `.tgz` and `.zip` artifacts. Managed runtime acquisition currently supports Node.js only. Updates, removals, direct GitHub installs, additional runtime families, registry authoring/validation commands, and richer package formats are planned next.
+The alpha installer currently supports `.tgz` and `.zip` artifacts. Managed runtime acquisition currently supports Node.js only. Package generation currently targets public GitHub Releases and relies on GitHub-provided SHA-256 digests. Updates, removals, direct GitHub installs, additional runtime families, one-command registry submission, and richer package formats are planned next.
 
 ## License
 
