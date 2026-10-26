@@ -338,31 +338,62 @@ func writeRecord(finalDir string, pkg registry.Package, artifact registry.Artifa
 
 func writeShim(binDir, finalDir string, pkg registry.Package, entrypoint, runtimeExecutable string) error {
 	entry := filepath.Join(finalDir, filepath.FromSlash(entrypoint))
+	program := entry
+	if runtimeExecutable != "" {
+		program = runtimeExecutable
+	}
+	args := launchArgs(pkg.Command.Args, entry, runtimeExecutable != "")
+
 	if runtime.GOOS == "windows" {
 		shim := filepath.Join(binDir, pkg.Command.Name+".cmd")
-		var content string
-		if runtimeExecutable != "" {
-			content = fmt.Sprintf("@echo off\r\n\"%s\" \"%s\" %%*\r\n", runtimeExecutable, entry)
-		} else {
-			content = fmt.Sprintf("@echo off\r\n\"%s\" %%*\r\n", entry)
+		parts := []string{"@echo off\r\n", cmdQuote(program)}
+		for _, arg := range args {
+			parts = append(parts, " ", cmdQuote(arg))
 		}
-		if err := os.WriteFile(shim, []byte(content), 0o755); err != nil {
+		parts = append(parts, " %*\r\n")
+		if err := os.WriteFile(shim, []byte(strings.Join(parts, "")), 0o755); err != nil {
 			return fmt.Errorf("write Windows shim: %w", err)
 		}
 		return nil
 	}
 
 	shim := filepath.Join(binDir, pkg.Command.Name)
-	var content string
-	if runtimeExecutable != "" {
-		content = fmt.Sprintf("#!/bin/sh\nexec %s %s \"$@\"\n", shellQuote(runtimeExecutable), shellQuote(entry))
-	} else {
-		content = fmt.Sprintf("#!/bin/sh\nexec %s \"$@\"\n", shellQuote(entry))
+	parts := []string{"#!/bin/sh\nexec ", shellQuote(program)}
+	for _, arg := range args {
+		parts = append(parts, " ", shellQuote(arg))
 	}
-	if err := os.WriteFile(shim, []byte(content), 0o755); err != nil {
+	parts = append(parts, " \"$@\"\n")
+	if err := os.WriteFile(shim, []byte(strings.Join(parts, "")), 0o755); err != nil {
 		return fmt.Errorf("write Unix shim: %w", err)
 	}
 	return nil
+}
+
+func launchArgs(configured []string, entry string, hasRuntime bool) []string {
+	if len(configured) == 0 {
+		if hasRuntime {
+			return []string{entry}
+		}
+		return nil
+	}
+	args := make([]string, 0, len(configured)+1)
+	foundEntrypoint := false
+	for _, arg := range configured {
+		if arg == "{entrypoint}" {
+			args = append(args, entry)
+			foundEntrypoint = true
+		} else {
+			args = append(args, arg)
+		}
+	}
+	if hasRuntime && !foundEntrypoint {
+		args = append(args, entry)
+	}
+	return args
+}
+
+func cmdQuote(value string) string {
+	return "\"" + strings.ReplaceAll(value, "\"", "\"\"") + "\""
 }
 
 func shellQuote(value string) string {

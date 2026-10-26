@@ -24,6 +24,7 @@ const (
 
 // The embedded registry is only a bootstrap/offline fallback. The authoritative
 // registry is the GitHub-hosted JSON file above and is cached under PACKRAIL_HOME.
+//
 //go:embed data/packages.json
 var files embed.FS
 
@@ -46,8 +47,9 @@ type Artifact struct {
 }
 
 type Command struct {
-	Name       string `json:"name"`
-	Entrypoint string `json:"entrypoint,omitempty"`
+	Name       string   `json:"name"`
+	Entrypoint string   `json:"entrypoint,omitempty"`
+	Args       []string `json:"args,omitempty"`
 }
 
 type Package struct {
