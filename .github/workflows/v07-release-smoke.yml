@@ -1,0 +1,78 @@
+name: v0.7 Release Smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/v07-release-smoke.yml
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap-unix:
+    name: bootstrap-${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Packrail from published release
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PACKRAIL_INSTALL_DIR="$RUNNER_TEMP/packrail-bin"
+          sh scripts/install.sh
+          "$PACKRAIL_INSTALL_DIR/prl" version | grep -q 'prl 0.7.0-alpha'
+
+  bootstrap-windows:
+    name: bootstrap-windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Packrail from published release
+        shell: pwsh
+        run: |
+          $env:PACKRAIL_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'packrail-bin'
+          & .\scripts\install.ps1
+          $output = (& (Join-Path $env:PACKRAIL_INSTALL_DIR 'prl.exe') version) -join "`n"
+          if ($output -notmatch 'prl 0.7.0-alpha') { throw "unexpected Packrail version: $output" }
+
+  self-update-linux:
+    name: self-update-linux-v06-to-v07
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download v0.6 binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://github.com/VyxorDev/packrail/releases/download/v0.6.0-alpha/prl-linux-amd64 -o "$RUNNER_TEMP/prl"
+          chmod +x "$RUNNER_TEMP/prl"
+          "$RUNNER_TEMP/prl" version | grep -q 'prl 0.6.0-alpha'
+      - name: Self-update to v0.7
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/prl" self update
+          "$RUNNER_TEMP/prl" version | grep -q 'prl 0.7.0-alpha'
+
+  self-update-windows:
+    name: self-update-windows-v06-to-v07
+    runs-on: windows-latest
+    steps:
+      - name: Download v0.6 binary
+        shell: pwsh
+        run: |
+          $path = Join-Path $env:RUNNER_TEMP 'prl.exe'
+          Invoke-WebRequest -UseBasicParsing https://github.com/VyxorDev/packrail/releases/download/v0.6.0-alpha/prl-windows-amd64.exe -OutFile $path
+          $output = (& $path version) -join "`n"
+          if ($output -notmatch 'prl 0.6.0-alpha') { throw "unexpected initial Packrail version: $output" }
+      - name: Self-update to v0.7
+        shell: pwsh
+        run: |
+          $path = Join-Path $env:RUNNER_TEMP 'prl.exe'
+          & $path self update
+          $output = (& $path version) -join "`n"
+          if ($output -notmatch 'prl 0.7.0-alpha') { throw "unexpected updated Packrail version: $output" }
