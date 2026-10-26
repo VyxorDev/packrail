@@ -25,6 +25,7 @@ jobs:
           gofmt -w cmd/prl/main.go cmd/prl/registry_admin.go internal/registry/*.go internal/submit/*.go internal/publisher/*.go
           go test ./...
           go vet ./...
+          go run ./cmd/prl registry build
           go run ./cmd/prl registry validate
       - name: Commit directly to main
         run: |
