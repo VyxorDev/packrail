@@ -36,6 +36,33 @@ jobs:
       - name: Build prl
         run: go build ./cmd/prl
 
+  publisher-smoke:
+    name: publisher-smoke
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: true
+
+      - name: Build prl
+        run: go build -o prl ./cmd/prl
+
+      - name: Inspect and generate StarterQueue package metadata
+        run: |
+          ./prl package inspect VyxorDev/starterqueue | grep -q 'starterqueue-0.5.0.tgz'
+          ./prl package generate VyxorDev/starterqueue > package-draft.json
+          grep -q '"name": "starterqueue"' package-draft.json
+          grep -q '"constraint": ">=20"' package-draft.json
+          grep -q '"name": "starterqueue"' package-draft.json
+          grep -q 'package/dist/src/cli.js' package-draft.json
+          grep -q '98dbcaa198576cb168f4ee024135e4fb910b91a8757763f45280809ebca46560' package-draft.json
+
   registry-smoke:
     name: registry-smoke
     runs-on: ubuntu-latest
