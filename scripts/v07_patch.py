@@ -1,0 +1,134 @@
+from pathlib import Path
+
+publisher = Path('internal/publisher/publisher.go')
+text = publisher.read_text()
+start = text.index('\t\tentrypoint := pkg.Command.Entrypoint', text.index('func (c *Client) Generate'))
+end = text.index('\t\tartifact := registry.Artifact{', start)
+replacement = '''\t\tentrypoint := pkg.Command.Entrypoint
+\t\tif entrypoint == "" {
+\t\t\tnativeEntrypoint, nativeErr := c.findCommandEntrypoint(asset, pkg.Command.Name)
+\t\t\tif nativeErr == nil {
+\t\t\t\tentrypoint = nativeEntrypoint
+\t\t\t} else {
+\t\t\t\tinference, inferred, inferenceErr := c.inferRuntimeEntrypoint(asset, pkg.Command.Name)
+\t\t\t\tif inferenceErr != nil {
+\t\t\t\t\twarnings = append(warnings, fmt.Sprintf("%s: runtime inference failed: %v", asset.Name, inferenceErr))
+\t\t\t\t} else if inferred {
+\t\t\t\t\tentrypoint = inference.Entrypoint
+\t\t\t\t\tif pkg.Runtime.Name == "" {
+\t\t\t\t\t\tpkg.Runtime = inference.Runtime
+\t\t\t\t\t\tpkg.Command.Args = append([]string(nil), inference.Args...)
+\t\t\t\t\t} else if !strings.EqualFold(pkg.Runtime.Name, inference.Runtime.Name) {
+\t\t\t\t\t\twarnings = append(warnings, fmt.Sprintf("%s inferred runtime %s but package already uses %s", asset.Name, inference.Runtime.Name, pkg.Runtime.Name))
+\t\t\t\t\t\tcomplete = false
+\t\t\t\t\t} else if len(pkg.Command.Args) == 0 {
+\t\t\t\t\t\tpkg.Command.Args = append([]string(nil), inference.Args...)
+\t\t\t\t\t}
+\t\t\t\t} else {
+\t\t\t\t\twarnings = append(warnings, fmt.Sprintf("%s: %v", asset.Name, nativeErr))
+\t\t\t\t}
+\t\t\t}
+\t\t}
+'''
+publisher.write_text(text[:start] + replacement + text[end:])
+
+main = Path('cmd/prl/main.go')
+text = main.read_text()
+text = text.replace(
+    '"github.com/VyxorDev/packrail/internal/registry"\n\tpackruntimes "github.com/VyxorDev/packrail/internal/runtimes"',
+    '"github.com/VyxorDev/packrail/internal/registry"\n\tpackruntimes "github.com/VyxorDev/packrail/internal/runtimes"\n\t"github.com/VyxorDev/packrail/internal/selfupdate"',
+    1,
+)
+text = text.replace('const version = "0.6.0-alpha"', 'const version = "0.7.0-alpha"', 1)
+
+start = text.index('\tcase "install", "i":')
+end = text.index('\n\tcase "update", "upgrade":', start)
+install_block = '''\tcase "install", "i":
+\t\tif len(args) != 2 {
+\t\t\treturn fmt.Errorf("usage: prl install <package|github:owner/repo>")
+\t\t}
+\t\ttarget := strings.TrimSpace(args[1])
+\t\tvar pkg registry.Package
+\t\tvar err error
+\t\tif strings.HasPrefix(strings.ToLower(target), "github:") {
+\t\t\trepo := strings.TrimSpace(target[len("github:"):])
+\t\t\tif repo == "" {
+\t\t\t\treturn fmt.Errorf("usage: prl install github:owner/repo")
+\t\t\t}
+\t\t\tfmt.Printf("Inspecting GitHub release: %s\\n", repo)
+\t\t\tdraft, draftErr := publisher.New().Generate(repo, "")
+\t\t\tif draftErr != nil {
+\t\t\t\treturn draftErr
+\t\t\t}
+\t\t\tfor _, warning := range draft.Warnings {
+\t\t\t\tfmt.Fprintf(os.Stderr, "warning: %s\\n", warning)
+\t\t\t}
+\t\t\tif !draft.Complete {
+\t\t\t\treturn fmt.Errorf("GitHub release could not be inferred safely; use 'prl package generate %s' to inspect the draft", repo)
+\t\t\t}
+\t\t\tpkg = draft.Package
+\t\t\tfmt.Println("Resolution: direct GitHub Release (registry not required)")
+\t\t} else {
+\t\t\trefreshRegistry()
+\t\t\tpkg, err = registry.Find(target)
+\t\t\tif err != nil {
+\t\t\t\treturn err
+\t\t\t}
+\t\t}
+\t\tif _, err := registry.ArtifactFor(pkg, runtime.GOOS, runtime.GOARCH); err != nil {
+\t\t\treturn err
+\t\t}
+\t\tfmt.Printf("Resolving %s %s\\n", pkg.Name, pkg.Version)
+\t\tfmt.Printf("Source: %s\\n", pkg.Source)
+\t\tfmt.Printf("Platform: %s\\n", registry.PlatformKey(runtime.GOOS, runtime.GOARCH))
+\t\tif pkg.Runtime.Name != "" {
+\t\t\tfmt.Printf("Runtime: %s %s (managed by Packrail)\\n", pkg.Runtime.Name, pkg.Runtime.Constraint)
+\t\t} else {
+\t\t\tfmt.Println("Runtime: native")
+\t\t}
+\t\tfmt.Println("Installing...")
+\t\tif err := install.Install(pkg); err != nil {
+\t\t\treturn err
+\t\t}
+\t\thome, _ := install.Home()
+\t\tfmt.Printf("Installed %s %s\\n", pkg.Name, pkg.Version)
+\t\tfmt.Printf("Command: %s\\n", pkg.Command.Name)
+\t\tfmt.Printf("Bin directory: %s\\n", filepath.Join(home, "bin"))
+\t\treturn nil
+'''
+text = text[:start] + install_block + text[end:]
+
+marker = '\tcase "version", "--version", "-v":'
+self_block = '''\tcase "self":
+\t\tif len(args) != 2 || args[1] != "update" {
+\t\t\treturn fmt.Errorf("usage: prl self update")
+\t\t}
+\t\tfmt.Printf("Checking for Packrail updates from %s...\\n", version)
+\t\tresult, err := selfupdate.Update(version)
+\t\tif err != nil {
+\t\t\treturn err
+\t\t}
+\t\tif !result.Updated {
+\t\t\tfmt.Printf("Packrail is already up to date (%s).\\n", result.Current)
+\t\t\treturn nil
+\t\t}
+\t\tfmt.Printf("Updated Packrail %s -> %s\\n", result.Previous, result.Current)
+\t\tfmt.Println("Restart prl to use the new binary.")
+\t\treturn nil
+
+'''
+if marker not in text:
+    raise SystemExit('version case marker not found')
+text = text.replace(marker, self_block + marker, 1)
+
+text = text.replace(
+    '  prl install <package>                         Install a package and required runtime',
+    '  prl install <package>                         Install a registry package and required runtime\\n  prl install github:owner/repo                 Install directly from a GitHub Release',
+    1,
+)
+text = text.replace(
+    '  prl doctor                                    Check the local Packrail environment\\n  prl version',
+    '  prl doctor                                    Check the local Packrail environment\\n  prl self update                               Update prl from the latest Packrail release\\n  prl version',
+    1,
+)
+main.write_text(text)
