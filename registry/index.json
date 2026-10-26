@@ -1,0 +1,71 @@
+[
+  {
+    "name": "ripgrep",
+    "version": "15.2.0",
+    "description": "A fast line-oriented search tool that recursively searches directories for a regex pattern.",
+    "source": "https://github.com/BurntSushi/ripgrep",
+    "artifacts": {
+      "windows-amd64": {
+        "url": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-pc-windows-msvc.zip",
+        "sha256": "71b2fef860abe467217a538ff31de02f5258807c0129f771846f87bd029aafc5",
+        "format": "zip",
+        "entrypoint": "ripgrep-15.2.0-x86_64-pc-windows-msvc/rg.exe"
+      },
+      "windows-arm64": {
+        "url": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-aarch64-pc-windows-msvc.zip",
+        "sha256": "e4abca10c3a64ebea742667dd7009449d49403db5460dd6873e389fa2945360f",
+        "format": "zip",
+        "entrypoint": "ripgrep-15.2.0-aarch64-pc-windows-msvc/rg.exe"
+      },
+      "linux-amd64": {
+        "url": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-unknown-linux-musl.tar.gz",
+        "sha256": "33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c",
+        "format": "tgz",
+        "entrypoint": "ripgrep-15.2.0-x86_64-unknown-linux-musl/rg"
+      },
+      "linux-arm64": {
+        "url": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-aarch64-unknown-linux-musl.tar.gz",
+        "sha256": "800b1e7206afe799dfb5a6901f23147cfaabe0e52210538100f61e86e1740915",
+        "format": "tgz",
+        "entrypoint": "ripgrep-15.2.0-aarch64-unknown-linux-musl/rg"
+      },
+      "darwin-amd64": {
+        "url": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-apple-darwin.tar.gz",
+        "sha256": "af7825fcc69a2afc7a7aea55fc9af90e26421d8f20fe59df32e233c0b8a231c1",
+        "format": "tgz",
+        "entrypoint": "ripgrep-15.2.0-x86_64-apple-darwin/rg"
+      },
+      "darwin-arm64": {
+        "url": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-aarch64-apple-darwin.tar.gz",
+        "sha256": "3750b2e93f37e0c692657da574d7019a101c0084da05a790c83fd335bad973e4",
+        "format": "tgz",
+        "entrypoint": "ripgrep-15.2.0-aarch64-apple-darwin/rg"
+      }
+    },
+    "command": {
+      "name": "rg"
+    }
+  },
+  {
+    "name": "starterqueue",
+    "version": "0.5.0",
+    "description": "Keep your good first issue queue honest.",
+    "source": "https://github.com/VyxorDev/starterqueue",
+    "runtime": {
+      "name": "node",
+      "constraint": ">=20",
+      "command": "node"
+    },
+    "artifacts": {
+      "any": {
+        "url": "https://github.com/VyxorDev/starterqueue/releases/download/v0.5.0/starterqueue-0.5.0.tgz",
+        "sha256": "98dbcaa198576cb168f4ee024135e4fb910b91a8757763f45280809ebca46560",
+        "format": "tgz"
+      }
+    },
+    "command": {
+      "name": "starterqueue",
+      "entrypoint": "package/dist/src/cli.js"
+    }
+  }
+]
