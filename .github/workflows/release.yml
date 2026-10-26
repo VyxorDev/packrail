@@ -1,16 +1,10 @@
 name: Release
 
 on:
-  workflow_dispatch:
-    inputs:
-      version:
-        description: Release version without the leading v, for example 0.8.0-alpha
-        required: true
-        type: string
-      confirm:
-        description: Type the exact release tag, for example v0.8.0-alpha
-        required: true
-        type: string
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/release.yml
 
 permissions:
   contents: write
@@ -20,8 +14,8 @@ jobs:
     if: github.repository == 'VyxorDev/packrail'
     runs-on: ubuntu-latest
     env:
-      RELEASE_VERSION: ${{ inputs.version }}
-      RELEASE_CONFIRM: ${{ inputs.confirm }}
+      RELEASE_VERSION: 0.8.0-alpha
+      RELEASE_CONFIRM: v0.8.0-alpha
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -45,6 +39,7 @@ jobs:
           grep -Fq "const version = \"$RELEASE_VERSION\"" cmd/prl/main.go
           go test ./...
           go vet ./...
+          go run ./cmd/prl registry validate --online
 
       - name: Build release binaries
         shell: bash
@@ -80,8 +75,9 @@ jobs:
           cat > RELEASE_NOTES.md <<EOF
           Packrail $tag
 
-          Cross-platform prl binaries for Windows, Linux, and macOS on x64 and ARM64.
-          Verify downloaded binaries with SHA256SUMS.txt.
+          Self-service GitHub registry submissions, split package manifests, registry provenance/ownership gates, and hardened multi-platform release inference.
+
+          Cross-platform prl binaries for Windows, Linux, and macOS on x64 and ARM64. Verify downloaded binaries with SHA256SUMS.txt.
           EOF
 
           if gh release view "$tag" >/dev/null 2>&1; then
