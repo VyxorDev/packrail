@@ -10,21 +10,24 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
 
 	"github.com/VyxorDev/packrail/internal/registry"
+	packruntimes "github.com/VyxorDev/packrail/internal/runtimes"
 )
 
 type InstallRecord struct {
-	Name      string `json:"name"`
-	Version   string `json:"version"`
-	Command   string `json:"command"`
-	Source    string `json:"source"`
-	Installed string `json:"installed_at"`
+	Name           string `json:"name"`
+	Version        string `json:"version"`
+	Command        string `json:"command"`
+	Source         string `json:"source"`
+	Runtime        string `json:"runtime,omitempty"`
+	RuntimeVersion string `json:"runtime_version,omitempty"`
+	ManagedRuntime bool   `json:"managed_runtime,omitempty"`
+	Installed      string `json:"installed_at"`
 }
 
 func Home() (string, error) {
@@ -39,11 +42,6 @@ func Home() (string, error) {
 }
 
 func Install(pkg registry.Package) error {
-	if pkg.Runtime.Command != "" {
-		if _, err := exec.LookPath(pkg.Runtime.Command); err != nil {
-			return fmt.Errorf("required runtime %s %s is not available on PATH", pkg.Runtime.Name, pkg.Runtime.Constraint)
-		}
-	}
 	if pkg.Artifact.Format != "tgz" {
 		return fmt.Errorf("unsupported artifact format %q", pkg.Artifact.Format)
 	}
@@ -59,6 +57,11 @@ func Install(pkg registry.Package) error {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return fmt.Errorf("create %s: %w", dir, err)
 		}
+	}
+
+	runtimeResult, err := packruntimes.Ensure(home, pkg.Runtime)
+	if err != nil {
+		return fmt.Errorf("prepare %s runtime: %w", pkg.Runtime.Name, err)
 	}
 
 	tmp, err := os.CreateTemp(stagingDir, pkg.Name+"-*.tgz")
@@ -101,10 +104,10 @@ func Install(pkg registry.Package) error {
 		return fmt.Errorf("commit installation: %w", err)
 	}
 
-	if err := writeRecord(finalDir, pkg); err != nil {
+	if err := writeRecord(finalDir, pkg, runtimeResult); err != nil {
 		return err
 	}
-	if err := writeShim(binDir, finalDir, pkg); err != nil {
+	if err := writeShim(binDir, finalDir, pkg, runtimeResult.Executable); err != nil {
 		return err
 	}
 	return nil
@@ -201,13 +204,16 @@ func extractTGZ(archivePath, destination string) error {
 	return nil
 }
 
-func writeRecord(finalDir string, pkg registry.Package) error {
+func writeRecord(finalDir string, pkg registry.Package, runtimeResult packruntimes.Result) error {
 	record := InstallRecord{
-		Name:      pkg.Name,
-		Version:   pkg.Version,
-		Command:   pkg.Command.Name,
-		Source:    pkg.Source,
-		Installed: time.Now().UTC().Format(time.RFC3339),
+		Name:           pkg.Name,
+		Version:        pkg.Version,
+		Command:        pkg.Command.Name,
+		Source:         pkg.Source,
+		Runtime:        pkg.Runtime.Name,
+		RuntimeVersion: runtimeResult.Version,
+		ManagedRuntime: runtimeResult.Managed,
+		Installed:      time.Now().UTC().Format(time.RFC3339),
 	}
 	data, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
@@ -219,11 +225,16 @@ func writeRecord(finalDir string, pkg registry.Package) error {
 	return nil
 }
 
-func writeShim(binDir, finalDir string, pkg registry.Package) error {
+func writeShim(binDir, finalDir string, pkg registry.Package, runtimeExecutable string) error {
 	entry := filepath.Join(finalDir, filepath.FromSlash(pkg.Command.Entrypoint))
 	if runtime.GOOS == "windows" {
 		shim := filepath.Join(binDir, pkg.Command.Name+".cmd")
-		content := fmt.Sprintf("@echo off\r\n%s \"%s\" %%*\r\n", pkg.Runtime.Command, entry)
+		var content string
+		if runtimeExecutable != "" {
+			content = fmt.Sprintf("@echo off\r\n\"%s\" \"%s\" %%*\r\n", runtimeExecutable, entry)
+		} else {
+			content = fmt.Sprintf("@echo off\r\n\"%s\" %%*\r\n", entry)
+		}
 		if err := os.WriteFile(shim, []byte(content), 0o755); err != nil {
 			return fmt.Errorf("write Windows shim: %w", err)
 		}
@@ -231,9 +242,18 @@ func writeShim(binDir, finalDir string, pkg registry.Package) error {
 	}
 
 	shim := filepath.Join(binDir, pkg.Command.Name)
-	content := fmt.Sprintf("#!/bin/sh\nexec %s %q \"$@\"\n", pkg.Runtime.Command, entry)
+	var content string
+	if runtimeExecutable != "" {
+		content = fmt.Sprintf("#!/bin/sh\nexec %s %s \"$@\"\n", shellQuote(runtimeExecutable), shellQuote(entry))
+	} else {
+		content = fmt.Sprintf("#!/bin/sh\nexec %s \"$@\"\n", shellQuote(entry))
+	}
 	if err := os.WriteFile(shim, []byte(content), 0o755); err != nil {
 		return fmt.Errorf("write Unix shim: %w", err)
 	}
 	return nil
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
