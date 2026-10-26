@@ -55,11 +55,12 @@ jobs:
 
       - name: Inspect and generate StarterQueue package metadata
         run: |
-          ./prl package inspect VyxorDev/starterqueue | grep -q 'starterqueue-0.5.0.tgz'
+          ./prl package inspect VyxorDev/starterqueue | tee inspect.txt
+          grep -q 'starterqueue-0.5.0.tgz' inspect.txt
           ./prl package generate VyxorDev/starterqueue > package-draft.json
+          cat package-draft.json
           grep -q '"name": "starterqueue"' package-draft.json
           grep -q '"constraint": ">=20"' package-draft.json
-          grep -q '"name": "starterqueue"' package-draft.json
           grep -q 'package/dist/src/cli.js' package-draft.json
           grep -q '98dbcaa198576cb168f4ee024135e4fb910b91a8757763f45280809ebca46560' package-draft.json
 
