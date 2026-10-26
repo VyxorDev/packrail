@@ -1,7 +1,9 @@
 package registry
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -27,6 +29,56 @@ func ValidateGitHubProvenance(pkg Package) error {
 		}
 	}
 	return nil
+}
+
+// VerifyPublisherOnline proves that login controls the package source. Personal
+// repositories are bound directly to their owner. Organization repositories may
+// be submitted by collaborators with push, maintain, or admin permission.
+func VerifyPublisherOnline(pkg Package, login, token string) error {
+	owner, repo, err := githubRepoFromURL(pkg.Source)
+	if err != nil {
+		return err
+	}
+	login = strings.TrimSpace(login)
+	if login == "" {
+		return fmt.Errorf("publisher login is required")
+	}
+	if strings.EqualFold(owner, login) {
+		return nil
+	}
+
+	endpoint := fmt.Sprintf("https://api.github.com/repos/%s/%s/collaborators/%s/permission", url.PathEscape(owner), url.PathEscape(repo), url.PathEscape(login))
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("User-Agent", "Packrail/prl")
+	if strings.TrimSpace(token) != "" {
+		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(token))
+	}
+	resp, err := verifyHTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 32<<10))
+		return fmt.Errorf("cannot prove @%s controls %s/%s: GitHub HTTP %s: %s", login, owner, repo, resp.Status, strings.TrimSpace(string(data)))
+	}
+	var result struct {
+		Permission string `json:"permission"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result); err != nil {
+		return fmt.Errorf("decode GitHub permission response: %w", err)
+	}
+	switch strings.ToLower(strings.TrimSpace(result.Permission)) {
+	case "admin", "maintain", "push", "write":
+		return nil
+	default:
+		return fmt.Errorf("@%s has %q permission on %s/%s; registry submission requires push/maintain/admin access", login, result.Permission, owner, repo)
+	}
 }
 
 // VerifyPackageOnline checks that the source repository and every declared
