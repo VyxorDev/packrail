@@ -2,42 +2,68 @@
 
 **Universal package distribution for open-source software.**
 
-Packrail is an experimental, Git-native distribution layer for open-source command-line software. The project is designed around a simple idea: users should not need to care whether a tool was published to npm, PyPI, crates.io, Homebrew, or another ecosystem.
+Packrail is an experimental, Git-native distribution layer for open-source command-line software. Users should not need to care whether a tool was written in Node.js, Rust, Go, Python, or something else.
 
 The CLI is `prl`.
 
 ```powershell
 prl install starterqueue
+prl install ripgrep
 prl search queue
-prl info starterqueue
+prl info ripgrep
 prl list
 prl doctor
 ```
 
 ## Status
 
-Packrail is currently **v0.2-alpha**.
+Packrail is currently **v0.3-alpha**.
 
-The install path now looks like:
+The install path is:
 
-`registry -> resolve -> runtime -> download -> SHA-256 verify -> extract -> shim -> run`
+`registry -> platform resolve -> runtime resolve -> download -> SHA-256 verify -> safe extract -> shim -> run`
 
-The initial registry contains StarterQueue, distributed directly from its GitHub Release rather than npm.
+The registry currently proves two different distribution models:
 
-### Managed runtimes
+- **StarterQueue** — a Node.js CLI distributed from GitHub Releases. Packrail automatically acquires and isolates a compatible Node runtime.
+- **ripgrep** — a native executable. Packrail selects the correct upstream artifact for Windows, Linux, or macOS and for x64 or ARM64.
 
-Packrail can now install its own private Node.js runtime when a package requires Node. The runtime is downloaded from the official Node.js distribution service, verified against the release's published SHA-256 checksum, and stored under the Packrail home directory.
+## Platform-aware packages
 
-That means this should work even when Node is not installed globally:
+A package can publish different verified artifacts for each target:
 
-```powershell
-prl install starterqueue
+```text
+windows-amd64
+windows-arm64
+linux-amd64
+linux-arm64
+darwin-amd64
+darwin-arm64
 ```
 
-Packrail keeps the runtime isolated under:
+Portable packages can use an `any` artifact instead. Packrail resolves the current machine automatically.
+
+For example:
+
+```powershell
+prl install ripgrep
+rg --version
+```
+
+The user does not need Rust or Cargo. Packrail installs the appropriate prebuilt native release and creates the `rg` command shim.
+
+## Managed runtimes
+
+When a package requires Node.js, Packrail can install a private runtime from the official Node.js distribution service, verify it against the release's published SHA-256 checksum, and store it under:
 
 ```text
 ~/.packrail/runtimes/node/
+```
+
+That means this works even when Node is not installed globally:
+
+```powershell
+prl install starterqueue
 ```
 
 Generated command shims point directly to the Packrail-managed runtime instead of relying on `node` from the user's PATH.
@@ -50,7 +76,8 @@ Generated command shims point directly to the Packrail-managed runtime instead o
 - Verification is mandatory, not optional.
 - Installations and managed runtimes live under the user's Packrail home instead of spraying files across the machine.
 - No arbitrary post-install scripts in the package format.
-- Language runtimes should be invisible implementation details for users whenever Packrail can manage them safely.
+- Language runtimes should be invisible implementation details whenever Packrail can manage them safely.
+- Platform differences should be solved by the registry and resolver, not by the user.
 
 ## Build
 
@@ -73,11 +100,11 @@ go test ./...
 go vet ./...
 ```
 
-CI tests Windows, Linux, and macOS. It also performs an end-to-end smoke install of StarterQueue using a Packrail-managed Node runtime.
+CI tests Windows, Linux, and macOS. It performs end-to-end installs for both a managed-runtime package (StarterQueue) and a native platform package (ripgrep).
 
 ## Current limitations
 
-The alpha package installer currently supports `.tgz` / tar+gzip package artifacts, and managed runtime acquisition currently supports Node.js only. Updates, removals, direct GitHub installs, additional runtime families, richer package formats, and registry PR validation are planned next.
+The alpha installer currently supports `.tgz` and `.zip` artifacts. Managed runtime acquisition currently supports Node.js only. Updates, removals, direct GitHub installs, additional runtime families, registry validation tooling, and richer package formats are planned next.
 
 ## License
 
