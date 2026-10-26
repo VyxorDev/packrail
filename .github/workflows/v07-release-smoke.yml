@@ -41,17 +41,22 @@ jobs:
           if ($output -notmatch 'prl 0.7.0-alpha') { throw "unexpected Packrail version: $output" }
 
   self-update-linux:
-    name: self-update-linux-v06-to-v07
+    name: self-update-linux-older-to-v07
     runs-on: ubuntu-latest
     steps:
-      - name: Download v0.6 binary
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+      - name: Build an older self-update-capable prl
         shell: bash
         run: |
           set -euo pipefail
-          curl -fsSL https://github.com/VyxorDev/packrail/releases/download/v0.6.0-alpha/prl-linux-amd64 -o "$RUNNER_TEMP/prl"
-          chmod +x "$RUNNER_TEMP/prl"
-          "$RUNNER_TEMP/prl" version | grep -q 'prl 0.6.0-alpha'
-      - name: Self-update to v0.7
+          sed -i 's/const version = "0.7.0-alpha"/const version = "0.6.9-alpha"/' cmd/prl/main.go
+          go build -o "$RUNNER_TEMP/prl" ./cmd/prl
+          "$RUNNER_TEMP/prl" version | grep -q 'prl 0.6.9-alpha'
+      - name: Self-update to published v0.7
         shell: bash
         run: |
           set -euo pipefail
@@ -59,17 +64,26 @@ jobs:
           "$RUNNER_TEMP/prl" version | grep -q 'prl 0.7.0-alpha'
 
   self-update-windows:
-    name: self-update-windows-v06-to-v07
+    name: self-update-windows-older-to-v07
     runs-on: windows-latest
     steps:
-      - name: Download v0.6 binary
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+      - name: Build an older self-update-capable prl
         shell: pwsh
         run: |
+          $main = 'cmd/prl/main.go'
+          $text = Get-Content $main -Raw
+          $text = $text.Replace('const version = "0.7.0-alpha"', 'const version = "0.6.9-alpha"')
+          Set-Content -Path $main -Value $text -NoNewline
           $path = Join-Path $env:RUNNER_TEMP 'prl.exe'
-          Invoke-WebRequest -UseBasicParsing https://github.com/VyxorDev/packrail/releases/download/v0.6.0-alpha/prl-windows-amd64.exe -OutFile $path
+          go build -o $path ./cmd/prl
           $output = (& $path version) -join "`n"
-          if ($output -notmatch 'prl 0.6.0-alpha') { throw "unexpected initial Packrail version: $output" }
-      - name: Self-update to v0.7
+          if ($output -notmatch 'prl 0.6.9-alpha') { throw "unexpected initial Packrail version: $output" }
+      - name: Self-update to published v0.7
         shell: pwsh
         run: |
           $path = Join-Path $env:RUNNER_TEMP 'prl.exe'
