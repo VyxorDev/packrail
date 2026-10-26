@@ -204,9 +204,27 @@ func (c *Client) Generate(repoInput, commandOverride string) (Draft, error) {
 		}
 		entrypoint := pkg.Command.Entrypoint
 		if entrypoint == "" {
-			entrypoint, err = c.findCommandEntrypoint(asset, pkg.Command.Name)
-			if err != nil {
-				warnings = append(warnings, fmt.Sprintf("%s: %v", asset.Name, err))
+			nativeEntrypoint, nativeErr := c.findCommandEntrypoint(asset, pkg.Command.Name)
+			if nativeErr == nil {
+				entrypoint = nativeEntrypoint
+			} else {
+				inference, inferred, inferenceErr := c.inferRuntimeEntrypoint(asset, pkg.Command.Name)
+				if inferenceErr != nil {
+					warnings = append(warnings, fmt.Sprintf("%s: runtime inference failed: %v", asset.Name, inferenceErr))
+				} else if inferred {
+					entrypoint = inference.Entrypoint
+					if pkg.Runtime.Name == "" {
+						pkg.Runtime = inference.Runtime
+						pkg.Command.Args = append([]string(nil), inference.Args...)
+					} else if !strings.EqualFold(pkg.Runtime.Name, inference.Runtime.Name) {
+						warnings = append(warnings, fmt.Sprintf("%s inferred runtime %s but package already uses %s", asset.Name, inference.Runtime.Name, pkg.Runtime.Name))
+						complete = false
+					} else if len(pkg.Command.Args) == 0 {
+						pkg.Command.Args = append([]string(nil), inference.Args...)
+					}
+				} else {
+					warnings = append(warnings, fmt.Sprintf("%s: %v", asset.Name, nativeErr))
+				}
 			}
 		}
 		artifact := registry.Artifact{

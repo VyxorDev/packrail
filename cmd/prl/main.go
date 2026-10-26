@@ -15,9 +15,10 @@ import (
 	"github.com/VyxorDev/packrail/internal/publisher"
 	"github.com/VyxorDev/packrail/internal/registry"
 	packruntimes "github.com/VyxorDev/packrail/internal/runtimes"
+	"github.com/VyxorDev/packrail/internal/selfupdate"
 )
 
-const version = "0.6.0-alpha"
+const version = "0.7.0-alpha"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -35,12 +36,35 @@ func run(args []string) error {
 	switch args[0] {
 	case "install", "i":
 		if len(args) != 2 {
-			return fmt.Errorf("usage: prl install <package>")
+			return fmt.Errorf("usage: prl install <package|github:owner/repo>")
 		}
-		refreshRegistry()
-		pkg, err := registry.Find(args[1])
-		if err != nil {
-			return err
+		target := strings.TrimSpace(args[1])
+		var pkg registry.Package
+		var err error
+		if strings.HasPrefix(strings.ToLower(target), "github:") {
+			repo := strings.TrimSpace(target[len("github:"):])
+			if repo == "" {
+				return fmt.Errorf("usage: prl install github:owner/repo")
+			}
+			fmt.Printf("Inspecting GitHub release: %s\n", repo)
+			draft, draftErr := publisher.New().Generate(repo, "")
+			if draftErr != nil {
+				return draftErr
+			}
+			for _, warning := range draft.Warnings {
+				fmt.Fprintf(os.Stderr, "warning: %s\n", warning)
+			}
+			if !draft.Complete {
+				return fmt.Errorf("GitHub release could not be inferred safely; use 'prl package generate %s' to inspect the draft", repo)
+			}
+			pkg = draft.Package
+			fmt.Println("Resolution: direct GitHub Release (registry not required)")
+		} else {
+			refreshRegistry()
+			pkg, err = registry.Find(target)
+			if err != nil {
+				return err
+			}
 		}
 		if _, err := registry.ArtifactFor(pkg, runtime.GOOS, runtime.GOARCH); err != nil {
 			return err
@@ -143,6 +167,23 @@ func run(args []string) error {
 
 	case "doctor":
 		return doctor()
+
+	case "self":
+		if len(args) != 2 || args[1] != "update" {
+			return fmt.Errorf("usage: prl self update")
+		}
+		fmt.Printf("Checking for Packrail updates from %s...\n", version)
+		result, err := selfupdate.Update(version)
+		if err != nil {
+			return err
+		}
+		if !result.Updated {
+			fmt.Printf("Packrail is already up to date (%s).\n", result.Current)
+			return nil
+		}
+		fmt.Printf("Updated Packrail %s -> %s\n", result.Previous, result.Current)
+		fmt.Println("Restart prl to use the new binary.")
+		return nil
 
 	case "version", "--version", "-v":
 		fmt.Printf("prl %s\n", version)
@@ -475,7 +516,7 @@ func printHelp() {
 Universal package distribution for open-source software.
 
 Usage:
-  prl install <package>                         Install a package and required runtime
+  prl install <package>                         Install a registry package and required runtime\n  prl install github:owner/repo                 Install directly from a GitHub Release
   prl update [package]                          Update one package or all installed packages
   prl remove <package>                          Remove a package and its tracked shims/files
   prl search [query]                            Search the GitHub-backed registry

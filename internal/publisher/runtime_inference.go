@@ -85,21 +85,21 @@ func (c *Client) inferRuntimeEntrypoint(asset Asset, command string) (runtimeInf
 	switch chosen.ext {
 	case ".py":
 		return runtimeInference{
-			Runtime: registry.Runtime{Name: "python", Constraint: ">=3.11", Command: "python"},
+			Runtime:    registry.Runtime{Name: "python", Constraint: ">=3.11", Command: "python"},
 			Entrypoint: chosen.name,
-			Args: []string{"{entrypoint}"},
+			Args:       []string{"{entrypoint}"},
 		}, true, nil
 	case ".jar":
 		return runtimeInference{
-			Runtime: registry.Runtime{Name: "java", Constraint: ">=21", Command: "java"},
+			Runtime:    registry.Runtime{Name: "java", Constraint: ">=21", Command: "java"},
 			Entrypoint: chosen.name,
-			Args: []string{"-jar", "{entrypoint}"},
+			Args:       []string{"-jar", "{entrypoint}"},
 		}, true, nil
 	case ".dll":
 		return runtimeInference{
-			Runtime: registry.Runtime{Name: "dotnet", Constraint: ">=8", Command: "dotnet"},
+			Runtime:    registry.Runtime{Name: "dotnet", Constraint: ">=8", Command: "dotnet"},
 			Entrypoint: chosen.name,
-			Args: []string{"{entrypoint}"},
+			Args:       []string{"{entrypoint}"},
 		}, true, nil
 	default:
 		return runtimeInference{}, false, nil
