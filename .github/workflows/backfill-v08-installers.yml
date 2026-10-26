@@ -1,0 +1,59 @@
+name: Backfill v0.8 Installers
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/backfill-v08-installers.yml
+
+permissions:
+  contents: write
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and upload version-pinned installer assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: 0.8.0-alpha
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist-installers
+
+          printf '%s\n' "\$env:PACKRAIL_INSTALL_VERSION = '$RELEASE_VERSION'" > dist-installers/install.ps1
+          cat scripts/install.ps1 >> dist-installers/install.ps1
+
+          printf '%s\n' "PACKRAIL_INSTALL_VERSION='$RELEASE_VERSION'" 'export PACKRAIL_INSTALL_VERSION' > dist-installers/install.sh
+          cat scripts/install.sh >> dist-installers/install.sh
+          chmod 755 dist-installers/install.sh
+          sh -n dist-installers/install.sh
+
+          gh release upload "v$RELEASE_VERSION" dist-installers/install.ps1 dist-installers/install.sh
+
+  linux-release-installer:
+    needs: upload
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install from immutable v0.8 release asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PACKRAIL_INSTALL_DIR="$RUNNER_TEMP/packrail-v08-release"
+          curl -fsSL https://github.com/VyxorDev/packrail/releases/download/v0.8.0-alpha/install.sh | sh
+          "$PACKRAIL_INSTALL_DIR/prl" version | grep -q 'prl 0.8.0-alpha'
+
+  windows-release-installer:
+    needs: upload
+    runs-on: windows-latest
+    steps:
+      - name: Install from immutable v0.8 release asset in Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:PACKRAIL_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'packrail-v08-release'
+          irm https://github.com/VyxorDev/packrail/releases/download/v0.8.0-alpha/install.ps1 | iex
+          $output = (& (Join-Path $env:PACKRAIL_INSTALL_DIR 'prl.exe') version) -join "`n"
+          if ($output -notmatch 'prl 0.8.0-alpha') { throw "unexpected Packrail version: $output" }
