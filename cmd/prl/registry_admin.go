@@ -29,6 +29,7 @@ func registryBuild(args []string) error {
 func registryValidate(args []string) error {
 	online := false
 	baseRef := ""
+	submitter := ""
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--online":
@@ -39,9 +40,18 @@ func registryValidate(args []string) error {
 			}
 			baseRef = args[i+1]
 			i++
+		case "--submitter":
+			if i+1 >= len(args) {
+				return fmt.Errorf("--submitter requires a GitHub login")
+			}
+			submitter = args[i+1]
+			i++
 		default:
 			return fmt.Errorf("unknown registry validate option %q", args[i])
 		}
+	}
+	if submitter != "" && baseRef == "" {
+		return fmt.Errorf("--submitter requires --base so Packrail can identify changed packages")
 	}
 
 	count, err := registry.ValidateIndex(canonicalManifestDir, canonicalIndexPath)
@@ -56,16 +66,35 @@ func registryValidate(args []string) error {
 		if err := registry.ValidateGitHubProvenance(pkg); err != nil {
 			return err
 		}
-		if online {
+	}
+
+	verifyPackages := packages
+	if baseRef != "" {
+		if err := validateRegistryHistory(baseRef); err != nil {
+			return err
+		}
+		changed, err := changedRegistryPackages(baseRef)
+		if err != nil {
+			return err
+		}
+		verifyPackages = changed
+	}
+
+	if online {
+		for _, pkg := range verifyPackages {
 			fmt.Printf("Verifying %-20s %s...\n", pkg.Name, pkg.Version)
 			if err := registry.VerifyPackageOnline(pkg); err != nil {
 				return fmt.Errorf("verify %s: %w", pkg.Name, err)
 			}
 		}
 	}
-	if baseRef != "" {
-		if err := validateRegistryHistory(baseRef); err != nil {
-			return err
+	if submitter != "" {
+		token := firstEnv("PACKRAIL_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
+		for _, pkg := range verifyPackages {
+			fmt.Printf("Verifying publisher @%s for %s...\n", submitter, pkg.Name)
+			if err := registry.VerifyPublisherOnline(pkg, submitter, token); err != nil {
+				return err
+			}
 		}
 	}
 	fmt.Printf("Registry valid: %d packages.\n", count)
@@ -108,6 +137,40 @@ func validateRegistryHistory(baseRef string) error {
 		}
 	}
 	return nil
+}
+
+func changedRegistryPackages(baseRef string) ([]registry.Package, error) {
+	paths, err := gitLines("diff", "--name-only", baseRef+"...HEAD", "--", canonicalManifestDir)
+	if err != nil {
+		return nil, fmt.Errorf("list changed registry manifests: %w", err)
+	}
+	var packages []registry.Package
+	for _, changedPath := range paths {
+		if !strings.HasSuffix(changedPath, ".json") {
+			continue
+		}
+		localPath := filepath.FromSlash(changedPath)
+		if _, err := os.Stat(localPath); os.IsNotExist(err) {
+			continue // deletion is rejected separately by validateRegistryHistory
+		} else if err != nil {
+			return nil, err
+		}
+		pkg, err := registry.ReadManifest(localPath)
+		if err != nil {
+			return nil, err
+		}
+		packages = append(packages, pkg)
+	}
+	return packages, nil
+}
+
+func firstEnv(names ...string) string {
+	for _, name := range names {
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func gitLines(args ...string) ([]string, error) {
