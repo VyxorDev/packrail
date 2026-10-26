@@ -8,6 +8,7 @@ Packrail is an experimental, Git-native distribution layer for open-source comma
 prl install ripgrep
 prl install github:BurntSushi/ripgrep
 prl install github:VyxorDev/starterqueue
+prl package submit owner/tool
 prl update
 prl remove ripgrep
 prl self update
@@ -15,7 +16,7 @@ prl self update
 
 ## Status
 
-Packrail is currently **v0.7-alpha**.
+Packrail is currently **v0.8-alpha**.
 
 The user-side flow is:
 
@@ -23,7 +24,7 @@ The user-side flow is:
 
 The publisher-side flow is:
 
-`GitHub repository -> latest Release -> detect artifacts -> infer metadata/runtime/entrypoint -> validate -> registry metadata`
+`GitHub repository -> latest Release -> detect artifacts -> infer metadata/runtime/entrypoint -> validate provenance -> create registry manifest/index update -> GitHub PR`
 
 ## Install Packrail
 
@@ -61,7 +62,7 @@ prl registry sync
 prl registry status
 ```
 
-If GitHub is unavailable, Packrail can fall back to the last valid cache or its embedded bootstrap registry.
+The authoritative flattened registry is `registry/index.json`. If GitHub is unavailable, Packrail can fall back to the last valid cache or its embedded bootstrap registry.
 
 ## Direct GitHub installs
 
@@ -69,11 +70,6 @@ A suitable public GitHub Release can be installed without first adding the proje
 
 ```powershell
 prl install github:BurntSushi/ripgrep
-```
-
-or:
-
-```powershell
 prl install github:VyxorDev/starterqueue
 ```
 
@@ -120,30 +116,18 @@ Packrail currently infers obvious `.py`, `.jar`, and command-matching `.dll` ent
 
 ## Update, remove, and self-update
 
-Update one package or every installed registry package:
-
 ```powershell
 prl update ripgrep
 prl update
-```
-
-Remove a package:
-
-```powershell
 prl remove ripgrep
+prl self update
 ```
 
 Packrail records installations in `.packrail.json`; removal uses those records instead of guessing which files belong to a package. Shared managed runtimes remain cached because another installed package may use them.
 
-Update Packrail itself:
+Self-update selects the correct Packrail release binary, verifies it against `SHA256SUMS.txt`, and replaces the current executable with rollback protection if replacement fails.
 
-```powershell
-prl self update
-```
-
-Self-update reads the repository `VERSION`, selects the correct release binary for the current OS/architecture, verifies it against that release's `SHA256SUMS.txt`, and replaces the running Packrail binary with rollback protection if replacement fails.
-
-## GitHub Release inspection and package authoring
+## GitHub Release inspection and local package authoring
 
 Inspect a public release:
 
@@ -157,19 +141,86 @@ Generate package metadata:
 prl package generate VyxorDev/starterqueue
 ```
 
-Generate, validate, and upsert registry metadata:
+Generate a canonical local package manifest and rebuild the index:
 
 ```powershell
 prl package add VyxorDev/starterqueue
 ```
 
-Use a different registry file with:
+The scalable registry layout is:
+
+```text
+registry/
+├── packages/
+│   ├── ripgrep.json
+│   └── starterqueue.json
+└── index.json
+```
+
+`registry/packages/<name>.json` is the authoring source. `registry/index.json` is a deterministic flattened index used by Packrail clients.
+
+Maintainers can rebuild and validate it with:
 
 ```powershell
-prl package add owner/tool --registry path/to/packages.json
+prl registry build
+prl registry validate
+prl registry validate --online
+```
+
+The older monolithic authoring mode remains available explicitly with `prl package add owner/tool --registry path/to/packages.json` for compatibility/testing.
+
+## Self-service registry submission
+
+A developer can submit a suitable GitHub Release without manually editing Packrail:
+
+```powershell
+prl package submit owner/tool
+```
+
+Packrail will:
+
+1. inspect the latest GitHub Release;
+2. select deterministic platform artifacts;
+3. infer command/runtime/entrypoint metadata where safe;
+4. validate the package and GitHub provenance;
+5. verify that the authenticated GitHub user owns or has push-level access to the source repository;
+6. create or synchronize a Packrail fork when necessary;
+7. create a submission branch containing the package manifest and rebuilt index; and
+8. open a pull request against `VyxorDev/packrail`.
+
+Authentication is resolved in this order:
+
+```text
+PACKRAIL_GITHUB_TOKEN
+GH_TOKEN
+GITHUB_TOKEN
+gh auth token
 ```
 
 For npm-style `.tgz` releases Packrail can read `package/package.json` and infer the package name/version, description, CLI command, CLI entrypoint, Node requirement, artifact URL, and SHA-256 digest. Conventional native and runtime-based archives receive additional conservative inference.
+
+## Registry submission gate
+
+Registry pull requests are checked automatically. A registry submission PR may only change:
+
+```text
+registry/packages/<package>.json
+registry/index.json
+```
+
+The gate checks:
+
+- manifest schema and required fields;
+- deterministic index freshness;
+- HTTPS/GitHub Release provenance;
+- source and artifact reachability;
+- artifact SHA-256 syntax;
+- package deletion attempts;
+- immutable source binding for existing package names;
+- immutable metadata for an already-published version; and
+- whether the PR author owns or has push/maintain/admin access to the source repository.
+
+A package name already associated with one GitHub repository cannot silently be reassigned to another repository.
 
 ## Platform-aware packages
 
@@ -199,7 +250,10 @@ SHA256SUMS.txt
 
 ## Security model
 
-- HTTPS sources are required by the registry.
+- Registry submissions are bound to GitHub repository ownership/collaborator permission.
+- Existing package names cannot silently switch source repositories.
+- Published version metadata is immutable in registry submission PRs.
+- Registry artifacts must be GitHub Release assets from the same repository as the declared source.
 - Package artifacts require SHA-256 metadata.
 - Runtime downloads are verified against upstream checksums/hashes.
 - Packrail release installers and self-update verify `SHA256SUMS.txt`.
@@ -215,6 +269,7 @@ SHA256SUMS.txt
 - Platform and runtime details should be implementation details, not user chores.
 - Verification is mandatory.
 - Publishing should begin from metadata projects already have instead of requiring another ecosystem registry.
+- Registry changes should be normal reviewable Git changes, not opaque database mutations.
 
 ## Build and development
 
@@ -224,13 +279,14 @@ Packrail targets Go 1.23+.
 go build -o prl ./cmd/prl
 go test ./...
 go vet ./...
+prl registry validate
 ```
 
-CI exercises Windows, Linux, and macOS; registry synchronization; publisher generation; package lifecycle; managed Node installs; native installs; and direct GitHub installs.
+CI exercises Windows, Linux, and macOS; registry synchronization; publisher generation; package lifecycle; managed Node installs; native installs; direct GitHub installs; and registry submission validation.
 
 ## Current limitations
 
-Packrail remains alpha software. Package artifacts currently support `.tgz`/`.tar.gz` and `.zip`. Runtime constraints use a deliberately small compatibility grammar rather than every ecosystem's complete version syntax. Direct GitHub installation works only when the release layout can be inferred safely. Python/Java/.NET publisher inference is intentionally conservative, runtime garbage collection is not implemented yet, and full transactional rollback/lockfiles are future work.
+Packrail remains alpha software. Package artifacts currently support `.tgz`/`.tar.gz` and `.zip`. Runtime constraints use a deliberately small compatibility grammar rather than every ecosystem's complete version syntax. Direct GitHub installation and automatic submission work only when release layouts can be inferred safely. Python/Java/.NET publisher inference is intentionally conservative. Organization submissions may require GitHub credentials that allow Packrail to verify repository permission. Runtime garbage collection, complete transaction rollback, signing/attestations, and lockfiles are future work.
 
 ## License
 
