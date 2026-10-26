@@ -74,19 +74,10 @@ func Install(pkg registry.Package) error {
 	if err != nil {
 		return fmt.Errorf("prepare %s runtime: %w", pkg.Runtime.Name, err)
 	}
-
-	tmp, err := os.CreateTemp(stagingDir, pkg.Name+"-*.")+func() string {
-		if artifact.Format == "zip" {
-			return "zip"
-		}
-		return "tgz"
-	}()
-	_ = tmp
-	_ = err
-	return installArtifact(pkg, artifact, entrypoint, runtimeResult, home, packagesDir, binDir, stagingDir)
+	return installArtifact(pkg, artifact, entrypoint, runtimeResult, packagesDir, binDir, stagingDir)
 }
 
-func installArtifact(pkg registry.Package, artifact registry.Artifact, entrypoint string, runtimeResult packruntimes.Result, home, packagesDir, binDir, stagingDir string) error {
+func installArtifact(pkg registry.Package, artifact registry.Artifact, entrypoint string, runtimeResult packruntimes.Result, packagesDir, binDir, stagingDir string) error {
 	suffix := ".tgz"
 	if artifact.Format == "zip" {
 		suffix = ".zip"
