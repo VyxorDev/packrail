@@ -24,13 +24,24 @@ jobs:
           set -euo pipefail
           go build -o prl ./cmd/prl
           ./prl package generate BurntSushi/ripgrep --command rg > ripgrep.json
-          grep -q '"name": "ripgrep"' ripgrep.json
-          grep -q '"windows-amd64"' ripgrep.json
-          grep -q '"linux-amd64"' ripgrep.json
-          grep -q '"darwin-arm64"' ripgrep.json
-          grep -q 'unknown-linux-gnu' ripgrep.json
-          if grep -q 'unknown-linux-musl' ripgrep.json; then
-            echo 'publisher selected musl despite GNU artifact availability'
-            exit 1
-          fi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          pkg = json.loads(Path('ripgrep.json').read_text())
+          assert pkg['name'] == 'ripgrep'
+          artifacts = pkg['artifacts']
+          expected = {
+              'windows-amd64', 'windows-arm64',
+              'linux-amd64', 'linux-arm64',
+              'darwin-amd64', 'darwin-arm64',
+          }
+          assert set(artifacts) == expected, set(artifacts)
+          assert 'msvc' in artifacts['windows-amd64']['url']
+          assert 'unknown-linux-gnu' in artifacts['linux-arm64']['url']
+          # ripgrep 15.2.0 has no x86_64 GNU Linux archive, so musl is the
+          # correct fallback for linux-amd64.
+          assert 'unknown-linux-musl' in artifacts['linux-amd64']['url']
+          assert pkg['command']['name'] == 'rg'
+          PY
           ./prl registry validate --online
