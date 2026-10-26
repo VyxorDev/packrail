@@ -1,8 +1,14 @@
 package registry
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
 
 func TestFindStarterQueue(t *testing.T) {
+	t.Setenv("PACKRAIL_HOME", t.TempDir())
 	pkg, err := Find("starterqueue")
 	if err != nil {
 		t.Fatal(err)
@@ -23,6 +29,7 @@ func TestFindStarterQueue(t *testing.T) {
 }
 
 func TestFindRipgrepPlatformArtifact(t *testing.T) {
+	t.Setenv("PACKRAIL_HOME", t.TempDir())
 	pkg, err := Find("ripgrep")
 	if err != nil {
 		t.Fatal(err)
@@ -40,6 +47,7 @@ func TestFindRipgrepPlatformArtifact(t *testing.T) {
 }
 
 func TestArtifactForUnsupportedPlatform(t *testing.T) {
+	t.Setenv("PACKRAIL_HOME", t.TempDir())
 	pkg, err := Find("ripgrep")
 	if err != nil {
 		t.Fatal(err)
@@ -50,6 +58,7 @@ func TestArtifactForUnsupportedPlatform(t *testing.T) {
 }
 
 func TestSearch(t *testing.T) {
+	t.Setenv("PACKRAIL_HOME", t.TempDir())
 	matches, err := Search("queue")
 	if err != nil {
 		t.Fatal(err)
@@ -65,4 +74,93 @@ func TestSearch(t *testing.T) {
 	if len(matches) != 1 || matches[0].Name != "ripgrep" {
 		t.Fatalf("unexpected ripgrep matches: %#v", matches)
 	}
+}
+
+func TestSyncMakesRemoteRegistryAuthoritative(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PACKRAIL_HOME", home)
+
+	manifest := testRegistryJSON("remote-tool", "9.1.0")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(manifest))
+	}))
+	defer server.Close()
+	t.Setenv("PACKRAIL_REGISTRY_URL", server.URL)
+
+	status, err := Sync()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Source != "cache" || status.PackageCount != 1 {
+		t.Fatalf("unexpected sync status: %#v", status)
+	}
+
+	pkg, err := Find("remote-tool")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pkg.Version != "9.1.0" {
+		t.Fatalf("remote version = %q, want 9.1.0", pkg.Version)
+	}
+	if _, err := Find("starterqueue"); err == nil {
+		t.Fatal("embedded registry should not override a valid synced cache")
+	}
+}
+
+func TestFailedSyncPreservesLastValidCache(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PACKRAIL_HOME", home)
+
+	body := testRegistryJSON("stable-tool", "1.0.0")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer server.Close()
+	t.Setenv("PACKRAIL_REGISTRY_URL", server.URL)
+
+	if _, err := Sync(); err != nil {
+		t.Fatal(err)
+	}
+	body = `[{"name":"broken","version":"2","source":"http://insecure.example","artifacts":{},"command":{"name":"broken"}}]`
+	if _, err := Sync(); err == nil {
+		t.Fatal("expected malformed remote registry to be rejected")
+	}
+
+	pkg, err := Find("stable-tool")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pkg.Version != "1.0.0" {
+		t.Fatalf("cache changed after failed sync: %#v", pkg)
+	}
+}
+
+func TestDecodeRejectsInvalidChecksum(t *testing.T) {
+	manifest := strings.Replace(testRegistryJSON("bad-hash", "1.0.0"), strings.Repeat("a", 64), "abc", 1)
+	if _, err := decodeAndValidate([]byte(manifest)); err == nil {
+		t.Fatal("expected invalid checksum to be rejected")
+	}
+}
+
+func testRegistryJSON(name, version string) string {
+	return `[
+  {
+    "name": "` + name + `",
+    "version": "` + version + `",
+    "description": "test package",
+    "source": "https://github.com/example/tool",
+    "artifacts": {
+      "any": {
+        "url": "https://github.com/example/tool/releases/download/v1/tool.tgz",
+        "sha256": "` + strings.Repeat("a", 64) + `",
+        "format": "tgz"
+      }
+    },
+    "command": {
+      "name": "tool",
+      "entrypoint": "package/tool"
+    }
+  }
+]`
 }
