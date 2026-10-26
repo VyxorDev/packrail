@@ -1,0 +1,60 @@
+name: Registry Gate
+
+on:
+  pull_request:
+    paths:
+      - 'registry/**'
+  push:
+    branches: [main]
+    paths:
+      - 'registry/**'
+      - 'internal/registry/**'
+      - 'cmd/prl/**'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+
+      - name: Restrict registry submissions to registry data
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="origin/${{ github.base_ref }}"
+          bad="$(git diff --name-only "$base...HEAD" | grep -Ev '^registry/(index\.json|packages/[a-z0-9._-]+\.json)$' || true)"
+          if [ -n "$bad" ]; then
+            echo "Registry submission PRs may only change registry/package manifests and registry/index.json."
+            echo "$bad"
+            exit 1
+          fi
+
+      - name: Validate registry submission
+        if: github.event_name == 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          go run ./cmd/prl registry validate \
+            --online \
+            --base "origin/${{ github.base_ref }}" \
+            --submitter "${{ github.actor }}"
+
+      - name: Validate registry on main
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          go run ./cmd/prl registry validate --online
