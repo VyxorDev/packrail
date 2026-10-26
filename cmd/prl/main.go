@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -175,11 +176,11 @@ func packageCommand(args []string) error {
 		if err != nil {
 			return err
 		}
-		data, err := json.MarshalIndent(draft.Package, "", "  ")
+		data, err := encodePackageJSON(draft.Package)
 		if err != nil {
 			return fmt.Errorf("encode package draft: %w", err)
 		}
-		fmt.Println(string(data))
+		fmt.Print(string(data))
 		for _, warning := range draft.Warnings {
 			fmt.Fprintf(os.Stderr, "warning: %s\n", warning)
 		}
@@ -190,6 +191,17 @@ func packageCommand(args []string) error {
 	default:
 		return fmt.Errorf("unknown package command %q; use 'prl package inspect' or 'prl package generate'", args[0])
 	}
+}
+
+func encodePackageJSON(pkg registry.Package) ([]byte, error) {
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(pkg); err != nil {
+		return nil, err
+	}
+	return buffer.Bytes(), nil
 }
 
 func registryCommand(args []string) error {
