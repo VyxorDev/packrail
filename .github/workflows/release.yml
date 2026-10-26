@@ -11,10 +11,6 @@ on:
         description: Type the exact release tag, for example v0.7.0-alpha
         required: true
         type: string
-  push:
-    branches: [main]
-    paths:
-      - .github/workflows/release.yml
 
 permissions:
   contents: write
@@ -24,8 +20,8 @@ jobs:
     if: github.repository == 'VyxorDev/packrail'
     runs-on: ubuntu-latest
     env:
-      RELEASE_VERSION: ${{ github.event_name == 'push' && '0.6.0-alpha' || inputs.version }}
-      RELEASE_CONFIRM: ${{ github.event_name == 'push' && 'v0.6.0-alpha' || inputs.confirm }}
+      RELEASE_VERSION: ${{ inputs.version }}
+      RELEASE_CONFIRM: ${{ inputs.confirm }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -42,6 +38,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
           test "$RELEASE_CONFIRM" = "v$RELEASE_VERSION"
           [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
           grep -Fq "const version = \"$RELEASE_VERSION\"" cmd/prl/main.go
@@ -81,24 +78,20 @@ jobs:
           set -euo pipefail
           tag="v$RELEASE_VERSION"
           cat > RELEASE_NOTES.md <<EOF
-          Packrail $tag makes the project usable end-to-end.
+          Packrail $tag
 
-          - Package authoring: prl package add can generate, validate, and upsert GitHub Release metadata into a Packrail registry.
-          - Lifecycle: prl update and prl remove manage installed packages from Packrail install records.
-          - Distribution: native prl binaries are published for Windows, Linux, and macOS on x64 and ARM64.
-          - Managed runtimes: Node.js, Python, Eclipse Temurin Java, and .NET can be acquired and checksum-verified under the private Packrail runtime store.
-
+          Cross-platform prl binaries for Windows, Linux, and macOS on x64 and ARM64.
           Verify downloaded binaries with SHA256SUMS.txt.
           EOF
 
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" dist/* --clobber
-            gh release edit "$tag" --notes-file RELEASE_NOTES.md --title "Packrail $tag" --prerelease
-          else
-            gh release create "$tag" \
-              --target "$GITHUB_SHA" \
-              --title "Packrail $tag" \
-              --notes-file RELEASE_NOTES.md \
-              --prerelease \
-              dist/*
+            echo "Release $tag already exists; refusing to overwrite an existing published version."
+            exit 1
           fi
+
+          gh release create "$tag" \
+            --target "$GITHUB_SHA" \
+            --title "Packrail $tag" \
+            --notes-file RELEASE_NOTES.md \
+            --prerelease \
+            dist/*
