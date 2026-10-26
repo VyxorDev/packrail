@@ -11,11 +11,12 @@ import (
 	"time"
 
 	"github.com/VyxorDev/packrail/internal/install"
+	"github.com/VyxorDev/packrail/internal/publisher"
 	"github.com/VyxorDev/packrail/internal/registry"
 	packruntimes "github.com/VyxorDev/packrail/internal/runtimes"
 )
 
-const version = "0.4.0-alpha"
+const version = "0.5.0-alpha"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -111,6 +112,9 @@ func run(args []string) error {
 	case "registry":
 		return registryCommand(args[1:])
 
+	case "package":
+		return packageCommand(args[1:])
+
 	case "list", "ls":
 		return listInstalled()
 
@@ -127,6 +131,64 @@ func run(args []string) error {
 
 	default:
 		return fmt.Errorf("unknown command %q; run 'prl help'", args[0])
+	}
+}
+
+func packageCommand(args []string) error {
+	if len(args) < 2 {
+		return fmt.Errorf("usage: prl package inspect <github-repo> | prl package generate <github-repo> [--command <name>]")
+	}
+	client := publisher.New()
+
+	switch args[0] {
+	case "inspect":
+		if len(args) != 2 {
+			return fmt.Errorf("usage: prl package inspect <github-repo>")
+		}
+		inspection, err := client.Inspect(args[1])
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Repository: %s/%s\n", inspection.Owner, inspection.Repo)
+		fmt.Printf("Release:    %s\n", inspection.Release)
+		fmt.Printf("Version:    %s\n", inspection.Version)
+		fmt.Printf("Assets:     %d supported\n", len(inspection.Assets))
+		for _, asset := range inspection.Assets {
+			fmt.Printf("  %-16s %-4s %s\n", asset.Platform, asset.Format, asset.Name)
+		}
+		for _, warning := range inspection.Warnings {
+			fmt.Fprintf(os.Stderr, "warning: %s\n", warning)
+		}
+		return nil
+
+	case "generate":
+		repo := args[1]
+		command := ""
+		for i := 2; i < len(args); i++ {
+			if args[i] != "--command" || i+1 >= len(args) {
+				return fmt.Errorf("usage: prl package generate <github-repo> [--command <name>]")
+			}
+			command = args[i+1]
+			i++
+		}
+		draft, err := client.Generate(repo, command)
+		if err != nil {
+			return err
+		}
+		data, err := json.MarshalIndent(draft.Package, "", "  ")
+		if err != nil {
+			return fmt.Errorf("encode package draft: %w", err)
+		}
+		fmt.Println(string(data))
+		for _, warning := range draft.Warnings {
+			fmt.Fprintf(os.Stderr, "warning: %s\n", warning)
+		}
+		if !draft.Complete {
+			fmt.Fprintln(os.Stderr, "warning: generated draft is incomplete; review command and entrypoints before adding it to the registry")
+		}
+		return nil
+	default:
+		return fmt.Errorf("unknown package command %q; use 'prl package inspect' or 'prl package generate'", args[0])
 	}
 }
 
@@ -286,14 +348,16 @@ func printHelp() {
 Universal package distribution for open-source software.
 
 Usage:
-  prl install <package>   Install a package and its required runtime
-  prl search [query]      Search the GitHub-backed registry
-  prl info <package>      Show package and platform metadata
-  prl registry status     Show registry source and cache state
-  prl registry sync       Force-sync package metadata from GitHub
-  prl list                List installed packages
-  prl doctor              Check the local Packrail environment
-  prl version             Print the CLI version
-  prl help                Show this help
+  prl install <package>                 Install a package and its required runtime
+  prl search [query]                    Search the GitHub-backed registry
+  prl info <package>                    Show package and platform metadata
+  prl package inspect <github-repo>     Inspect a GitHub Release for Packrail assets
+  prl package generate <github-repo>    Generate a Packrail registry draft
+  prl registry status                   Show registry source and cache state
+  prl registry sync                     Force-sync package metadata from GitHub
+  prl list                              List installed packages
+  prl doctor                            Check the local Packrail environment
+  prl version                           Print the CLI version
+  prl help                              Show this help
 `, version)
 }
