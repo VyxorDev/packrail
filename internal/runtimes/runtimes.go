@@ -922,7 +922,10 @@ func extractRuntimeTGZ(archivePath, destination string) error {
 
 func safeRuntimeTarget(root, name string) (string, error) {
 	clean := filepath.Clean(filepath.FromSlash(strings.ReplaceAll(name, "\\", "/")))
-	if clean == "." || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
+	if clean == "." {
+		return root, nil
+	}
+	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
 		return "", fmt.Errorf("unsafe runtime archive path %q", name)
 	}
 	target := filepath.Join(root, clean)
