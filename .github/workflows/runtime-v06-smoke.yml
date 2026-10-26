@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - .github/workflows/runtime-v06-smoke.yml
+      - internal/runtimes/**
 
 permissions:
   contents: read
