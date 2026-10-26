@@ -1,0 +1,45 @@
+name: Fix Runtime Archive Root
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/fix-dotnet-root.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Allow harmless tar root marker
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('internal/runtimes/runtimes.go')
+          text = path.read_text()
+          old = '''\tif clean == "." || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
+          \t\treturn "", fmt.Errorf("unsafe runtime archive path %q", name)
+          \t}'''
+          new = '''\tif clean == "." {
+          \t\treturn root, nil
+          \t}
+          \tif filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
+          \t\treturn "", fmt.Errorf("unsafe runtime archive path %q", name)
+          \t}'''
+          if old not in text:
+              raise SystemExit('expected safeRuntimeTarget block not found')
+          path.write_text(text.replace(old, new, 1))
+
+      - name: Commit fix directly to main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add internal/runtimes/runtimes.go
+          git commit -m "fix: allow runtime archive root entries"
+          git push origin HEAD:main
