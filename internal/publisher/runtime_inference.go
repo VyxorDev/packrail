@@ -20,6 +20,61 @@ type runtimeInference struct {
 	Args       []string
 }
 
+type nativeInference struct {
+	Entrypoint string
+	Command    string
+}
+
+// preferredAssets collapses release variants that map to the same Packrail
+// platform. For conventional Linux hosts, glibc/GNU builds are preferred over
+// musl builds. Other ties are deterministic by asset name.
+func preferredAssets(assets []Asset) ([]Asset, []string) {
+	selected := map[string]Asset{}
+	var warnings []string
+	for _, asset := range assets {
+		current, exists := selected[asset.Platform]
+		if !exists {
+			selected[asset.Platform] = asset
+			continue
+		}
+		winner, loser := current, asset
+		if assetPreference(asset) < assetPreference(current) ||
+			(assetPreference(asset) == assetPreference(current) && asset.Name < current.Name) {
+			winner, loser = asset, current
+			selected[asset.Platform] = asset
+		}
+		warnings = append(warnings, fmt.Sprintf("multiple assets map to %s; selected %s over %s", asset.Platform, winner.Name, loser.Name))
+	}
+	out := make([]Asset, 0, len(selected))
+	for _, asset := range selected {
+		out = append(out, asset)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Platform == out[j].Platform {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].Platform < out[j].Platform
+	})
+	return out, warnings
+}
+
+func assetPreference(asset Asset) int {
+	name := strings.ToLower(asset.Name)
+	if strings.HasPrefix(asset.Platform, "linux-") {
+		switch {
+		case strings.Contains(name, "unknown-linux-gnu"), strings.Contains(name, "linux-gnu"):
+			return 0
+		case strings.Contains(name, "musl"):
+			return 3
+		case strings.Contains(name, "static"):
+			return 4
+		default:
+			return 1
+		}
+	}
+	return 0
+}
+
 // inferRuntimeEntrypoint is intentionally conservative. It only infers a
 // runtime launch when an archive contains a strong command-name match (for
 // example tool.py/tool.jar/tool.dll) or exactly one plausible Python/Java
@@ -104,6 +159,78 @@ func (c *Client) inferRuntimeEntrypoint(asset Asset, command string) (runtimeInf
 	default:
 		return runtimeInference{}, false, nil
 	}
+}
+
+// inferNativeEntrypoint handles repositories whose repo name differs from the
+// command name, such as BurntSushi/ripgrep -> rg. It only accepts one obvious
+// native executable: a single .exe in ZIP archives or a single executable-mode
+// regular file in tarballs.
+func (c *Client) inferNativeEntrypoint(asset Asset) (nativeInference, bool, error) {
+	archive, err := c.download(asset)
+	if err != nil {
+		return nativeInference{}, false, fmt.Errorf("download for native entrypoint detection: %w", err)
+	}
+	defer os.Remove(archive)
+
+	var candidates []string
+	switch asset.Format {
+	case "zip":
+		reader, err := zip.OpenReader(archive)
+		if err != nil {
+			return nativeInference{}, false, err
+		}
+		defer reader.Close()
+		for _, file := range reader.File {
+			if file.FileInfo().IsDir() {
+				continue
+			}
+			name := strings.ReplaceAll(file.Name, "\\", "/")
+			if strings.EqualFold(path.Ext(name), ".exe") {
+				candidates = append(candidates, name)
+			}
+		}
+	case "tgz":
+		file, err := os.Open(archive)
+		if err != nil {
+			return nativeInference{}, false, err
+		}
+		defer file.Close()
+		gz, err := gzip.NewReader(file)
+		if err != nil {
+			return nativeInference{}, false, err
+		}
+		defer gz.Close()
+		tr := tar.NewReader(gz)
+		for {
+			header, err := tr.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return nativeInference{}, false, err
+			}
+			if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
+				continue
+			}
+			if header.FileInfo().Mode().Perm()&0o111 == 0 {
+				continue
+			}
+			candidates = append(candidates, strings.ReplaceAll(header.Name, "\\", "/"))
+		}
+	default:
+		return nativeInference{}, false, fmt.Errorf("unsupported archive format %s", asset.Format)
+	}
+
+	if len(candidates) != 1 {
+		return nativeInference{}, false, nil
+	}
+	entrypoint := candidates[0]
+	command := path.Base(entrypoint)
+	command = strings.TrimSuffix(command, path.Ext(command))
+	if strings.TrimSpace(command) == "" {
+		return nativeInference{}, false, nil
+	}
+	return nativeInference{Entrypoint: entrypoint, Command: command}, true, nil
 }
 
 func archiveFiles(archivePath, format string) ([]string, error) {
