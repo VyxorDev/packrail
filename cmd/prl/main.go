@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -12,9 +11,10 @@ import (
 
 	"github.com/VyxorDev/packrail/internal/install"
 	"github.com/VyxorDev/packrail/internal/registry"
+	packruntimes "github.com/VyxorDev/packrail/internal/runtimes"
 )
 
-const version = "0.1.0-alpha"
+const version = "0.2.0-alpha"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -40,7 +40,10 @@ func run(args []string) error {
 		}
 		fmt.Printf("Resolving %s %s\n", pkg.Name, pkg.Version)
 		fmt.Printf("Source: %s\n", pkg.Source)
-		fmt.Println("Downloading and verifying artifact...")
+		if pkg.Runtime.Name != "" {
+			fmt.Printf("Runtime: %s %s (managed by Packrail)\n", pkg.Runtime.Name, pkg.Runtime.Constraint)
+		}
+		fmt.Println("Installing...")
 		if err := install.Install(pkg); err != nil {
 			return err
 		}
@@ -170,17 +173,20 @@ func doctor() error {
 	fmt.Printf("Home:     %s\n", home)
 	fmt.Printf("Bin:      %s\n", binDir)
 
-	pathOK := pathContains(binDir)
-	if pathOK {
+	if pathContains(binDir) {
 		fmt.Println("PATH:     ok")
 	} else {
 		fmt.Println("PATH:     Packrail bin directory is not on PATH")
 	}
 
-	if node, err := exec.LookPath("node"); err == nil {
-		fmt.Printf("Node:     %s\n", node)
+	nodeVersions, err := packruntimes.InstalledVersions(home, "node")
+	if err != nil {
+		return err
+	}
+	if len(nodeVersions) == 0 {
+		fmt.Println("Node:     no Packrail-managed runtime installed")
 	} else {
-		fmt.Println("Node:     not found (needed by StarterQueue alpha package)")
+		fmt.Printf("Node:     managed %s\n", strings.Join(nodeVersions, ", "))
 	}
 	return nil
 }
@@ -204,7 +210,7 @@ func printHelp() {
 Universal package distribution for open-source software.
 
 Usage:
-  prl install <package>   Install a package
+  prl install <package>   Install a package and its managed runtime
   prl search [query]      Search the registry
   prl info <package>      Show package metadata
   prl list                List installed packages
