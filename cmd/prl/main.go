@@ -16,9 +16,10 @@ import (
 	"github.com/VyxorDev/packrail/internal/registry"
 	packruntimes "github.com/VyxorDev/packrail/internal/runtimes"
 	"github.com/VyxorDev/packrail/internal/selfupdate"
+	"github.com/VyxorDev/packrail/internal/submit"
 )
 
-const version = "0.7.0-alpha"
+const version = "0.8.0-alpha"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -257,7 +258,7 @@ func updateOne(name string) error {
 
 func packageCommand(args []string) error {
 	if len(args) < 2 {
-		return fmt.Errorf("usage: prl package inspect|generate|add <github-repo>")
+		return fmt.Errorf("usage: prl package inspect|generate|add|submit <github-repo>")
 	}
 	client := publisher.New()
 
@@ -282,10 +283,10 @@ func packageCommand(args []string) error {
 		}
 		return nil
 
-	case "generate", "add":
+	case "generate", "add", "submit":
 		repo := args[1]
 		command := ""
-		registryPath := filepath.FromSlash("internal/registry/data/packages.json")
+		legacyRegistryPath := ""
 		for i := 2; i < len(args); i++ {
 			switch args[i] {
 			case "--command":
@@ -295,15 +296,19 @@ func packageCommand(args []string) error {
 				command = args[i+1]
 				i++
 			case "--registry":
+				if args[0] != "add" {
+					return fmt.Errorf("--registry is only supported by 'prl package add'")
+				}
 				if i+1 >= len(args) {
 					return fmt.Errorf("--registry requires a path")
 				}
-				registryPath = args[i+1]
+				legacyRegistryPath = args[i+1]
 				i++
 			default:
 				return fmt.Errorf("unknown package option %q", args[i])
 			}
 		}
+
 		draft, err := client.Generate(repo, command)
 		if err != nil {
 			return err
@@ -318,14 +323,65 @@ func packageCommand(args []string) error {
 			}
 			fmt.Print(string(data))
 			if !draft.Complete {
-				fmt.Fprintln(os.Stderr, "warning: generated draft is incomplete; review command and entrypoints before adding it to the registry")
+				fmt.Fprintln(os.Stderr, "warning: generated draft is incomplete; review command and entrypoints before publishing it")
 			}
 			return nil
 		}
 		if !draft.Complete {
-			return fmt.Errorf("package draft is incomplete; fix the warnings or provide --command before adding it")
+			return fmt.Errorf("package draft is incomplete; fix the warnings or provide --command before publishing it")
 		}
-		replaced, err := publisher.UpsertRegistryFile(registryPath, draft.Package)
+		if err := registry.ValidateGitHubProvenance(draft.Package); err != nil {
+			return err
+		}
+
+		if args[0] == "submit" {
+			submitter, err := submit.New()
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Submitting %s %s to the Packrail registry...\n", draft.Package.Name, draft.Package.Version)
+			result, err := submitter.Submit(draft.Package)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Created registry PR #%d: %s\n", result.Number, result.URL)
+			fmt.Printf("Branch: %s (%s)\n", result.Branch, result.Repository)
+			return nil
+		}
+
+		if legacyRegistryPath != "" {
+			replaced, err := publisher.UpsertRegistryFile(legacyRegistryPath, draft.Package)
+			if err != nil {
+				return err
+			}
+			action := "Added"
+			if replaced {
+				action = "Updated"
+			}
+			fmt.Printf("%s %s %s in legacy registry %s\n", action, draft.Package.Name, draft.Package.Version, legacyRegistryPath)
+			return nil
+		}
+
+		manifestPath := registry.ManifestPath(canonicalManifestDir, draft.Package.Name)
+		_, statErr := os.Stat(manifestPath)
+		replaced := statErr == nil
+		if statErr != nil && !os.IsNotExist(statErr) {
+			return statErr
+		}
+		if replaced {
+			oldPkg, err := registry.ReadManifest(manifestPath)
+			if err != nil {
+				return err
+			}
+			if err := registry.ValidateMutation(oldPkg, draft.Package); err != nil {
+				return err
+			}
+		}
+		writtenPath, err := registry.WriteManifest(canonicalManifestDir, draft.Package)
+		if err != nil {
+			return err
+		}
+		count, err := registry.BuildIndex(canonicalManifestDir, canonicalIndexPath)
 		if err != nil {
 			return err
 		}
@@ -333,11 +389,12 @@ func packageCommand(args []string) error {
 		if replaced {
 			action = "Updated"
 		}
-		fmt.Printf("%s %s %s in %s\n", action, draft.Package.Name, draft.Package.Version, registryPath)
-		fmt.Println("Review the diff, run tests, then commit the registry change.")
+		fmt.Printf("%s %s %s in %s\n", action, draft.Package.Name, draft.Package.Version, writtenPath)
+		fmt.Printf("Rebuilt %s (%d packages).\n", canonicalIndexPath, count)
+		fmt.Println("Review the manifest and index diff, run 'prl registry validate --online', then commit.")
 		return nil
 	default:
-		return fmt.Errorf("unknown package command %q; use inspect, generate, or add", args[0])
+		return fmt.Errorf("unknown package command %q; use inspect, generate, add, or submit", args[0])
 	}
 }
 
@@ -401,6 +458,12 @@ func encodePackageJSON(pkg registry.Package) ([]byte, error) {
 }
 
 func registryCommand(args []string) error {
+	if len(args) > 0 && args[0] == "build" {
+		return registryBuild(args[1:])
+	}
+	if len(args) > 0 && args[0] == "validate" {
+		return registryValidate(args[1:])
+	}
 	if len(args) == 0 || args[0] == "status" {
 		if len(args) > 1 {
 			return fmt.Errorf("usage: prl registry status")
@@ -427,7 +490,7 @@ func registryCommand(args []string) error {
 		return nil
 	}
 
-	return fmt.Errorf("unknown registry command %q; use 'prl registry status' or 'prl registry sync'", args[0])
+	return fmt.Errorf("unknown registry command %q; use status, sync, build, or validate", args[0])
 }
 
 func printRegistryStatus(status registry.StatusInfo) {
@@ -516,18 +579,22 @@ func printHelp() {
 Universal package distribution for open-source software.
 
 Usage:
-  prl install <package>                         Install a registry package and required runtime\n  prl install github:owner/repo                 Install directly from a GitHub Release
+  prl install <package>                         Install a registry package and required runtime
+  prl install github:owner/repo                 Install directly from a GitHub Release
   prl update [package]                          Update one package or all installed packages
   prl remove <package>                          Remove a package and its tracked shims/files
   prl search [query]                            Search the GitHub-backed registry
   prl info <package>                            Show package and platform metadata
   prl package inspect <github-repo>             Inspect a GitHub Release for Packrail assets
   prl package generate <github-repo>            Generate a Packrail registry draft
-  prl package add <github-repo>                 Generate, validate, and upsert registry metadata
+  prl package add <github-repo>                 Generate and write a local registry manifest
+  prl package submit <github-repo>              Generate, verify ownership, and open a registry PR
   prl runtime install <runtime> [constraint]    Install a managed Node/Python/Java/.NET runtime
   prl runtime list                              List Packrail-managed runtimes
   prl registry status                           Show registry source and cache state
   prl registry sync                             Force-sync package metadata from GitHub
+  prl registry build                            Rebuild registry/index.json from package manifests
+  prl registry validate [--online]              Validate manifests, index, provenance, and URLs
   prl list                                      List installed packages
   prl doctor                                    Check the local Packrail environment
   prl version                                   Print the CLI version

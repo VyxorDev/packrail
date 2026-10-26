@@ -101,6 +101,9 @@ func (c *Client) Submit(pkg registry.Package) (Result, error) {
 	if err := registry.ValidatePackage(pkg); err != nil {
 		return Result{}, fmt.Errorf("validate submission: %w", err)
 	}
+	if err := registry.ValidateGitHubProvenance(pkg); err != nil {
+		return Result{}, fmt.Errorf("validate submission provenance: %w", err)
+	}
 	owner, repo, err := githubSource(pkg.Source)
 	if err != nil {
 		return Result{}, err

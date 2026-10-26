@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	defaultRegistryURL = "https://raw.githubusercontent.com/VyxorDev/packrail/main/internal/registry/data/packages.json"
+	defaultRegistryURL = "https://raw.githubusercontent.com/VyxorDev/packrail/main/registry/index.json"
 	maxRegistryBytes   = 4 << 20
 	cacheMaxAge        = time.Hour
 )

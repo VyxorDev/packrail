@@ -27,12 +27,12 @@ func TestParseGitHubRepo(t *testing.T) {
 
 func TestDetectPlatform(t *testing.T) {
 	cases := map[string]string{
-		"ripgrep-15.2.0-x86_64-pc-windows-msvc.zip":       "windows-amd64",
-		"ripgrep-15.2.0-aarch64-pc-windows-msvc.zip":      "windows-arm64",
-		"ripgrep-15.2.0-x86_64-unknown-linux-musl.tar.gz": "linux-amd64",
+		"ripgrep-15.2.0-x86_64-pc-windows-msvc.zip":        "windows-amd64",
+		"ripgrep-15.2.0-aarch64-pc-windows-msvc.zip":       "windows-arm64",
+		"ripgrep-15.2.0-x86_64-unknown-linux-musl.tar.gz":  "linux-amd64",
 		"ripgrep-15.2.0-aarch64-unknown-linux-musl.tar.gz": "linux-arm64",
-		"ripgrep-15.2.0-x86_64-apple-darwin.tar.gz":       "darwin-amd64",
-		"ripgrep-15.2.0-aarch64-apple-darwin.tar.gz":      "darwin-arm64",
+		"ripgrep-15.2.0-x86_64-apple-darwin.tar.gz":        "darwin-amd64",
+		"ripgrep-15.2.0-aarch64-apple-darwin.tar.gz":       "darwin-arm64",
 		"starterqueue-0.5.0.tgz":                           "",
 	}
 	for name, want := range cases {

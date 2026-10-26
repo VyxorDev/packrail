@@ -149,6 +149,9 @@ func (c *Client) Generate(repoInput, commandOverride string) (Draft, error) {
 	if err != nil {
 		return Draft{}, err
 	}
+	preferred, preferenceWarnings := preferredAssets(inspection.Assets)
+	inspection.Assets = preferred
+	inspection.Warnings = append(inspection.Warnings, preferenceWarnings...)
 
 	pkg := registry.Package{
 		Name:        normalizePackageName(inspection.Repo),
