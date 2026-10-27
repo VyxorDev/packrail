@@ -193,3 +193,23 @@ func testRegistryJSON(name, version string) string {
   }
 ]`
 }
+
+
+func TestDecodeRejectsUnsafeVersionPath(t *testing.T) {
+	manifest := testRegistryJSON("unsafe-version", "../../outside")
+	if _, err := decodeAndValidate([]byte(manifest)); err == nil {
+		t.Fatal("expected path-traversing version to be rejected")
+	}
+}
+
+func TestDecodeRejectsUnsafeCommandPath(t *testing.T) {
+	manifest := strings.Replace(
+		testRegistryJSON("unsafe-command", "1.0.0"),
+		"\"name\": \"tool\"",
+		"\"name\": \"../escape\"",
+		1,
+	)
+	if _, err := decodeAndValidate([]byte(manifest)); err == nil {
+		t.Fatal("expected path-traversing command name to be rejected")
+	}
+}

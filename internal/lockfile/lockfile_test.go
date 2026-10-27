@@ -167,3 +167,38 @@ func TestRemoveLastPackageKeepsEmptyArray(t *testing.T) {
 		t.Fatalf("expected an empty, non-nil package list; got %#v", file.Packages)
 	}
 }
+
+
+func TestLoadRejectsPathTraversingVersion(t *testing.T) {
+	file := New()
+	file.Packages = []registry.Package{testPackage("demo", "../../outside")}
+	data, err := json.Marshal(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), FileName)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "unsafe version") {
+		t.Fatalf("expected unsafe version error, got %v", err)
+	}
+}
+
+func TestLoadRejectsPathTraversingCommandName(t *testing.T) {
+	pkg := testPackage("demo", "1.0.0")
+	pkg.Command.Name = "../escape"
+	file := New()
+	file.Packages = []registry.Package{pkg}
+	data, err := json.Marshal(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), FileName)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "unsafe command name") {
+		t.Fatalf("expected unsafe command error, got %v", err)
+	}
+}

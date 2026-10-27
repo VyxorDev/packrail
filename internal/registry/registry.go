@@ -31,7 +31,108 @@ var files embed.FS
 
 var (
 	httpClient  = &http.Client{Timeout: 30 * time.Second}
-	packageName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
+	packageName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*package registry
+
+import (
+	"embed"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"path"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"time"
+)
+
+const (
+	defaultRegistryURL = "https://raw.githubusercontent.com/VyxorDev/packrail/main/registry/index.json"
+	maxRegistryBytes   = 4 << 20
+	cacheMaxAge        = time.Hour
+)
+
+// The embedded registry is only a bootstrap/offline fallback. The authoritative
+// registry is the GitHub-hosted JSON file above and is cached under PACKRAIL_HOME.
+//
+//go:embed data/packages.json
+var files embed.FS
+
+var (
+	httpClient  = &http.Client{Timeout: 30 * time.Second}
+)
+	packageVersion = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]*package registry
+
+import (
+	"embed"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"path"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"time"
+)
+
+const (
+	defaultRegistryURL = "https://raw.githubusercontent.com/VyxorDev/packrail/main/registry/index.json"
+	maxRegistryBytes   = 4 << 20
+	cacheMaxAge        = time.Hour
+)
+
+// The embedded registry is only a bootstrap/offline fallback. The authoritative
+// registry is the GitHub-hosted JSON file above and is cached under PACKRAIL_HOME.
+//
+//go:embed data/packages.json
+var files embed.FS
+
+var (
+	httpClient  = &http.Client{Timeout: 30 * time.Second}
+)
+	commandName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*package registry
+
+import (
+	"embed"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"path"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"time"
+)
+
+const (
+	defaultRegistryURL = "https://raw.githubusercontent.com/VyxorDev/packrail/main/registry/index.json"
+	maxRegistryBytes   = 4 << 20
+	cacheMaxAge        = time.Hour
+)
+
+// The embedded registry is only a bootstrap/offline fallback. The authoritative
+// registry is the GitHub-hosted JSON file above and is cached under PACKRAIL_HOME.
+//
+//go:embed data/packages.json
+var files embed.FS
+
+var (
+	httpClient  = &http.Client{Timeout: 30 * time.Second}
+)
 )
 
 type Runtime struct {
@@ -304,14 +405,16 @@ func decodeAndValidate(data []byte) ([]Package, error) {
 			return nil, fmt.Errorf("duplicate package name %q", pkg.Name)
 		}
 		seen[pkg.Name] = struct{}{}
-		if strings.TrimSpace(pkg.Version) == "" {
-			return nil, fmt.Errorf("package %s has no version", pkg.Name)
+		pkg.Version = strings.TrimSpace(pkg.Version)
+		if !packageVersion.MatchString(pkg.Version) || strings.HasSuffix(pkg.Version, ".") {
+			return nil, fmt.Errorf("package %s has unsafe version %q (expected a single safe path segment)", pkg.Name, pkg.Version)
 		}
 		if err := requireHTTPS(pkg.Source); err != nil {
 			return nil, fmt.Errorf("package %s source: %w", pkg.Name, err)
 		}
-		if strings.TrimSpace(pkg.Command.Name) == "" {
-			return nil, fmt.Errorf("package %s has no command name", pkg.Name)
+		pkg.Command.Name = strings.TrimSpace(pkg.Command.Name)
+		if !commandName.MatchString(pkg.Command.Name) || strings.HasSuffix(pkg.Command.Name, ".") {
+			return nil, fmt.Errorf("package %s has unsafe command name %q", pkg.Name, pkg.Command.Name)
 		}
 		if len(pkg.Artifacts) == 0 {
 			return nil, fmt.Errorf("package %s has no artifacts", pkg.Name)
