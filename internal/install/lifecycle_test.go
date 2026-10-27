@@ -73,6 +73,9 @@ func TestIsCurrentUsesPackageMetadataFingerprint(t *testing.T) {
 	if err := os.MkdirAll(packageDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(packageDir, "demo"), []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	record := InstallRecord{
 		Name:           pkg.Name,
 		Version:        pkg.Version,
