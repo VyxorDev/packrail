@@ -10,24 +10,31 @@ import (
 	"strings"
 
 	"github.com/VyxorDev/packrail/internal/registry"
+	packruntimes "github.com/VyxorDev/packrail/internal/runtimes"
 )
 
 const (
 	FileName       = "packrail.lock"
-	CurrentVersion = 1
+	CurrentVersion = 2
 	maxFileBytes   = 16 << 20
 )
 
-// File is a self-contained set of resolved package definitions. Keeping the
-// complete metadata pins release URLs, platform artifacts, entrypoints, and
-// SHA-256 checksums independently of future registry changes.
+// File is a self-contained set of resolved package definitions. Version 2 also
+// pins exact managed-runtime artifacts per platform. Version 1 remains readable
+// and keeps its historical constraint-based runtime behavior until it is
+// rewritten by `prl add`.
 type File struct {
-	LockfileVersion int               `json:"lockfile_version"`
-	Packages        []registry.Package `json:"packages"`
+	LockfileVersion int                                  `json:"lockfile_version"`
+	Packages        []registry.Package                   `json:"packages"`
+	Runtimes        map[string]packruntimes.LockedRuntime `json:"runtimes,omitempty"`
 }
 
 func New() File {
-	return File{LockfileVersion: CurrentVersion, Packages: []registry.Package{}}
+	return File{
+		LockfileVersion: CurrentVersion,
+		Packages:        []registry.Package{},
+		Runtimes:        map[string]packruntimes.LockedRuntime{},
+	}
 }
 
 // Path returns the lockfile in the current working directory.
@@ -41,7 +48,9 @@ func LoadOrEmpty(path string) (File, bool, error) {
 		return file, true, nil
 	}
 	if errors.Is(err, os.ErrNotExist) {
-		return New(), false, nil
+		file = New()
+		packruntimes.ConfigureLockedRuntimes(file.Runtimes)
+		return file, false, nil
 	}
 	return File{}, false, err
 }
@@ -71,11 +80,13 @@ func Load(path string) (File, error) {
 	if err := normalizeAndValidate(&file); err != nil {
 		return File{}, fmt.Errorf("validate lockfile %s: %w", path, err)
 	}
+	packruntimes.ConfigureLockedRuntimes(file.Runtimes)
 	return file, nil
 }
 
 // Upsert adds a package or replaces its existing entry by case-insensitive name.
-// The resulting package list is normalized and sorted for stable diffs.
+// Rewriting a v1 lockfile upgrades it to v2 and resolves exact runtime pins for
+// every managed-runtime package in the resulting project.
 func Upsert(file *File, pkg registry.Package) error {
 	if file == nil {
 		return fmt.Errorf("lockfile is nil")
@@ -93,19 +104,36 @@ func Upsert(file *File, pkg registry.Package) error {
 	if err := validatePackage(pkg); err != nil {
 		return err
 	}
+
+	replaced := false
 	for i, existing := range file.Packages {
 		if strings.EqualFold(existing.Name, pkg.Name) {
 			file.Packages[i] = pkg
-			return normalizeAndValidate(file)
+			replaced = true
+			break
 		}
 	}
-	file.Packages = append(file.Packages, pkg)
-	return normalizeAndValidate(file)
+	if !replaced {
+		file.Packages = append(file.Packages, pkg)
+	}
+
+	file.LockfileVersion = CurrentVersion
+	if file.Runtimes == nil {
+		file.Runtimes = map[string]packruntimes.LockedRuntime{}
+	}
+	if err := resolveRuntimePins(file); err != nil {
+		return err
+	}
+	if err := normalizeAndValidate(file); err != nil {
+		return err
+	}
+	packruntimes.ConfigureLockedRuntimes(file.Runtimes)
+	return nil
 }
 
 // Remove deletes a package entry from the project lockfile. It deliberately
 // does not uninstall the package from PACKRAIL_HOME because that installation
-// may be shared by other projects.
+// may be shared by other projects. Unused v2 runtime pins are pruned.
 func Remove(file *File, name string) (bool, error) {
 	if file == nil {
 		return false, fmt.Errorf("lockfile is nil")
@@ -123,6 +151,10 @@ func Remove(file *File, name string) (bool, error) {
 			if len(file.Packages) == 0 {
 				file.Packages = []registry.Package{}
 			}
+			if file.LockfileVersion == CurrentVersion {
+				pruneRuntimePins(file)
+				packruntimes.ConfigureLockedRuntimes(file.Runtimes)
+			}
 			return true, nil
 		}
 	}
@@ -131,6 +163,9 @@ func Remove(file *File, name string) (bool, error) {
 
 func Save(path string, file File) error {
 	file.Packages = append([]registry.Package(nil), file.Packages...)
+	if file.Runtimes == nil && file.LockfileVersion == CurrentVersion {
+		file.Runtimes = map[string]packruntimes.LockedRuntime{}
+	}
 	if err := normalizeAndValidate(&file); err != nil {
 		return fmt.Errorf("validate lockfile before writing: %w", err)
 	}
@@ -168,6 +203,7 @@ func Save(path string, file File) error {
 	if err := replaceFile(tmpPath, path); err != nil {
 		return fmt.Errorf("commit lockfile: %w", err)
 	}
+	packruntimes.ConfigureLockedRuntimes(file.Runtimes)
 	return nil
 }
 
@@ -185,8 +221,8 @@ func normalizeAndValidate(file *File) error {
 	if file == nil {
 		return fmt.Errorf("lockfile is nil")
 	}
-	if file.LockfileVersion != CurrentVersion {
-		return fmt.Errorf("unsupported lockfile_version %d (supported: %d)", file.LockfileVersion, CurrentVersion)
+	if file.LockfileVersion != 1 && file.LockfileVersion != CurrentVersion {
+		return fmt.Errorf("unsupported lockfile_version %d (supported: 1, %d)", file.LockfileVersion, CurrentVersion)
 	}
 	if file.Packages == nil {
 		file.Packages = []registry.Package{}
@@ -210,7 +246,120 @@ func normalizeAndValidate(file *File) error {
 	sort.Slice(file.Packages, func(i, j int) bool {
 		return file.Packages[i].Name < file.Packages[j].Name
 	})
+
+	if file.LockfileVersion == 1 {
+		// v1 did not contain exact runtime pins. Clear any accidental v2 fields so
+		// its historical dynamic-runtime behavior is unambiguous.
+		file.Runtimes = nil
+		return nil
+	}
+	if file.Runtimes == nil {
+		file.Runtimes = map[string]packruntimes.LockedRuntime{}
+	}
+	for _, pkg := range file.Packages {
+		if strings.TrimSpace(pkg.Runtime.Name) == "" {
+			continue
+		}
+		key := packruntimes.SpecKey(pkg.Runtime)
+		locked, ok := file.Runtimes[key]
+		if !ok {
+			return fmt.Errorf("package %s runtime %s is not pinned", pkg.Name, pkg.Runtime.Name)
+		}
+		if !sameRuntimeSpec(pkg.Runtime, locked) {
+			return fmt.Errorf("package %s runtime pin does not match its registry constraint", pkg.Name)
+		}
+		if err := packruntimes.ValidateLockedRuntime(locked, runtimePlatformsForPackage(pkg)); err != nil {
+			return fmt.Errorf("package %s runtime pins: %w", pkg.Name, err)
+		}
+	}
 	return nil
+}
+
+func resolveRuntimePins(file *File) error {
+	needed := map[string]registry.Runtime{}
+	platforms := map[string]map[string]struct{}{}
+	for _, pkg := range file.Packages {
+		if strings.TrimSpace(pkg.Runtime.Name) == "" {
+			continue
+		}
+		key := packruntimes.SpecKey(pkg.Runtime)
+		needed[key] = pkg.Runtime
+		if platforms[key] == nil {
+			platforms[key] = map[string]struct{}{}
+		}
+		for _, platform := range runtimePlatformsForPackage(pkg) {
+			platforms[key][platform] = struct{}{}
+		}
+	}
+
+	for key, spec := range needed {
+		required := make([]string, 0, len(platforms[key]))
+		for platform := range platforms[key] {
+			required = append(required, platform)
+		}
+		sort.Strings(required)
+		if existing, ok := file.Runtimes[key]; ok && sameRuntimeSpec(spec, existing) && packruntimes.ValidateLockedRuntime(existing, required) == nil {
+			continue
+		}
+		locked, err := packruntimes.ResolveLockedRuntime(spec, required)
+		if err != nil {
+			return fmt.Errorf("pin runtime %s %s: %w", spec.Name, spec.Constraint, err)
+		}
+		file.Runtimes[key] = locked
+	}
+	pruneRuntimePins(file)
+	return nil
+}
+
+func pruneRuntimePins(file *File) {
+	if file.Runtimes == nil {
+		return
+	}
+	used := map[string]bool{}
+	for _, pkg := range file.Packages {
+		if strings.TrimSpace(pkg.Runtime.Name) != "" {
+			used[packruntimes.SpecKey(pkg.Runtime)] = true
+		}
+	}
+	for key := range file.Runtimes {
+		if !used[key] {
+			delete(file.Runtimes, key)
+		}
+	}
+}
+
+func runtimePlatformsForPackage(pkg registry.Package) []string {
+	all := false
+	set := map[string]struct{}{}
+	for platform := range pkg.Artifacts {
+		platform = strings.ToLower(strings.TrimSpace(platform))
+		if platform == "any" {
+			all = true
+			break
+		}
+		if platform != "" {
+			set[platform] = struct{}{}
+		}
+	}
+	if all {
+		return packruntimes.ManagedPlatforms()
+	}
+	out := make([]string, 0, len(set))
+	for platform := range set {
+		out = append(out, platform)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sameRuntimeSpec(spec registry.Runtime, locked packruntimes.LockedRuntime) bool {
+	return strings.EqualFold(strings.TrimSpace(spec.Name), strings.TrimSpace(locked.Name)) ||
+		(strings.EqualFold(strings.TrimSpace(spec.Name), "nodejs") && strings.EqualFold(strings.TrimSpace(locked.Name), "node")) ||
+		(strings.EqualFold(strings.TrimSpace(spec.Name), "python3") && strings.EqualFold(strings.TrimSpace(locked.Name), "python")) ||
+		(strings.EqualFold(strings.TrimSpace(spec.Name), "jre") && strings.EqualFold(strings.TrimSpace(locked.Name), "java")) ||
+		(strings.EqualFold(strings.TrimSpace(spec.Name), ".net") && strings.EqualFold(strings.TrimSpace(locked.Name), "dotnet")) &&
+		strings.TrimSpace(spec.Constraint) == strings.TrimSpace(locked.Constraint) &&
+		strings.TrimSpace(spec.Command) == strings.TrimSpace(locked.Command)
 }
 
 func replaceFile(source, destination string) error {
