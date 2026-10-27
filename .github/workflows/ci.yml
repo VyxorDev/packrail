@@ -213,9 +213,13 @@ jobs:
           $output = (& (Join-Path $env:PACKRAIL_INSTALL_DIR 'prl.exe') version) -join "`n"
           if ($output -notmatch 'prl 0.8.0-alpha') { throw "unexpected Packrail version: $output" }
 
-  lockfile-smoke:
-    name: lockfile-sync-smoke
-    runs-on: ubuntu-latest
+  project-smoke:
+    name: project-${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: Checkout
@@ -227,25 +231,65 @@ jobs:
           go-version: '1.23.x'
           cache: true
 
-      - name: Build prl
+      - name: Build prl on Unix
+        if: runner.os != 'Windows'
         run: go build -o prl ./cmd/prl
 
-      - name: Add a native package, sync into a clean Packrail home, and prove idempotence
+      - name: Build prl on Windows
+        if: runner.os == 'Windows'
+        run: go build -o prl.exe ./cmd/prl
+
+      - name: Project manifest lifecycle on Unix
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           set -euo pipefail
-          PACKRAIL_HOME="$RUNNER_TEMP/packrail-add" ./prl add ripgrep
-          test -f packrail.lock
+          ./prl init
+          grep -q '"manifest_version": 1' packrail.json
+          PACKRAIL_HOME="$RUNNER_TEMP/packrail-project-add" ./prl add ripgrep@15.2.0
+          grep -q '"ripgrep"' packrail.json
+          grep -q '"constraint": "15.2.0"' packrail.json
           grep -q '"lockfile_version": 2' packrail.lock
-          ./prl lock list | grep -q 'ripgrep'
           ./prl lock validate | grep -q 'Lockfile valid: 1 package (version 2)'
-          PACKRAIL_HOME="$RUNNER_TEMP/packrail-sync" ./prl sync | tee sync-first.txt
-          grep -q 'Installed ripgrep 15.2.0' sync-first.txt
-          PACKRAIL_HOME="$RUNNER_TEMP/packrail-sync" ./prl sync | tee sync-second.txt
-          grep -q 'Already in sync: ripgrep 15.2.0' sync-second.txt
-          ./prl lock remove ripgrep
+          PACKRAIL_HOME="$RUNNER_TEMP/packrail-project-sync" ./prl sync | tee project-sync-first.txt
+          grep -q '1 installed/updated, 0 already in sync' project-sync-first.txt
+          "$RUNNER_TEMP/packrail-project-sync/bin/rg" --version | grep -q 'ripgrep 15.2.0'
+          PACKRAIL_HOME="$RUNNER_TEMP/packrail-project-sync" ./prl sync | grep -q '0 installed/updated, 1 already in sync'
+          ./prl remove ripgrep
+          grep -Fq '"dependencies": {}' packrail.json
           grep -Fq '"packages": []' packrail.lock
-          test -x "$RUNNER_TEMP/packrail-add/bin/rg"
+          ./prl sync | grep -q 'Nothing to sync'
+          test -x "$RUNNER_TEMP/packrail-project-add/bin/rg"
+
+      - name: Project manifest lifecycle on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          .\prl.exe init
+          $manifest = Get-Content .\packrail.json -Raw | ConvertFrom-Json
+          if ($manifest.manifest_version -ne 1) { throw 'expected manifest v1' }
+          $env:PACKRAIL_HOME = Join-Path $env:RUNNER_TEMP 'packrail-project-add'
+          .\prl.exe add ripgrep@15.2.0
+          $manifest = Get-Content .\packrail.json -Raw | ConvertFrom-Json
+          if ($manifest.dependencies.ripgrep.constraint -ne '15.2.0') { throw 'manifest constraint missing' }
+          $lock = Get-Content .\packrail.lock -Raw | ConvertFrom-Json
+          if ($lock.lockfile_version -ne 2 -or $lock.packages.Count -ne 1) { throw 'lockfile state invalid' }
+          $env:PACKRAIL_HOME = Join-Path $env:RUNNER_TEMP 'packrail-project-sync'
+          $first = (.\prl.exe sync) -join "`n"
+          if ($first -notmatch '1 installed/updated, 0 already in sync') { throw "unexpected first sync: $first" }
+          $rg = (& "$env:PACKRAIL_HOME\bin\rg.cmd" --version) -join "`n"
+          if ($rg -notmatch 'ripgrep 15.2.0') { throw "unexpected ripgrep: $rg" }
+          $second = (.\prl.exe sync) -join "`n"
+          if ($second -notmatch '0 installed/updated, 1 already in sync') { throw "unexpected second sync: $second" }
+          .\prl.exe remove ripgrep
+          $manifest = Get-Content .\packrail.json -Raw | ConvertFrom-Json
+          $lock = Get-Content .\packrail.lock -Raw | ConvertFrom-Json
+          if ($manifest.dependencies.PSObject.Properties.Count -ne 0) { throw 'manifest dependency was not removed' }
+          if ($lock.packages.Count -ne 0) { throw 'lock package was not removed' }
+          $empty = (.\prl.exe sync) -join "`n"
+          if ($empty -notmatch 'Nothing to sync') { throw "unexpected empty sync: $empty" }
+          if (-not (Test-Path (Join-Path $env:RUNNER_TEMP 'packrail-project-add\bin\rg.cmd'))) { throw 'default project remove uninstalled the shared package' }
 
   lockfile-runtime-smoke:
     name: lockfile-runtime-${{ matrix.os }}
@@ -279,6 +323,8 @@ jobs:
         run: |
           set -euo pipefail
           PACKRAIL_HOME="$RUNNER_TEMP/packrail-runtime-add" ./prl add starterqueue
+          grep -q '"manifest_version": 1' packrail.json
+          grep -q '"starterqueue"' packrail.json
           grep -q '"lockfile_version": 2' packrail.lock
           grep -q '"runtimes"' packrail.lock
           platform="$(go env GOOS)-$(go env GOARCH)"
@@ -296,6 +342,8 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $env:PACKRAIL_HOME = Join-Path $env:RUNNER_TEMP 'packrail-runtime-add'
           .\prl.exe add starterqueue
+          $manifest = Get-Content .\packrail.json -Raw | ConvertFrom-Json
+          if ($manifest.manifest_version -ne 1 -or -not $manifest.dependencies.starterqueue) { throw 'project manifest missing starterqueue' }
           $lock = Get-Content .\packrail.lock -Raw | ConvertFrom-Json
           if ($lock.lockfile_version -ne 2) { throw 'expected lockfile v2' }
           $key = 'node|>=20|node'
