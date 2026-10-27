@@ -80,8 +80,10 @@ func RecordsFor(name string) ([]InstallRecord, error) {
 }
 
 // IsCurrent reports whether the installed package matches the exact locked
-// package metadata and platform artifact, and whether its command shim/runtime
-// still exist. Older records without a metadata fingerprint are reinstalled once.
+// package metadata and platform artifact, whether its command shim still exists,
+// and, for lockfile v2, whether its managed runtime matches the exact runtime
+// version pinned for this platform. Older records without a metadata fingerprint
+// are reinstalled once.
 func IsCurrent(pkg registry.Package) (bool, error) {
 	artifact, err := registry.ArtifactFor(pkg, runtime.GOOS, runtime.GOARCH)
 	if err != nil {
@@ -94,6 +96,10 @@ func IsCurrent(pkg registry.Package) (bool, error) {
 	fingerprint, err := packageMetadataSHA256(pkg)
 	if err != nil {
 		return false, fmt.Errorf("fingerprint package metadata: %w", err)
+	}
+	lockedRuntimeVersion, runtimePinned, err := packruntimes.LockedVersion(pkg.Runtime)
+	if err != nil {
+		return false, err
 	}
 	records, err := RecordsFor(pkg.Name)
 	if err != nil {
@@ -124,6 +130,9 @@ func IsCurrent(pkg registry.Package) (bool, error) {
 			!strings.EqualFold(record.ArtifactSHA256, artifact.SHA256) ||
 			record.MetadataSHA256 != fingerprint ||
 			!strings.EqualFold(record.Command, pkg.Command.Name) {
+			continue
+		}
+		if runtimePinned && (!record.ManagedRuntime || record.RuntimeVersion != lockedRuntimeVersion) {
 			continue
 		}
 		if record.ManagedRuntime {
