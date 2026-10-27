@@ -89,33 +89,23 @@ func run(args []string) error {
 		fmt.Printf("Bin directory: %s\n", filepath.Join(home, "bin"))
 		return nil
 
+	case "init":
+		return projectInitCommand(args[1:])
+
 	case "add":
-		return addCommand(args[1:])
+		return projectAddCommand(args[1:])
 
 	case "lock":
 		return lockCommand(args[1:])
 
 	case "sync":
-		return syncCommand(args[1:])
+		return projectSyncCommand(args[1:])
 
 	case "update", "upgrade":
-		return updateCommand(args[1:])
+		return projectUpdateCommand(args[1:])
 
 	case "remove", "uninstall", "rm":
-		if len(args) != 2 {
-			return fmt.Errorf("usage: prl remove <package>")
-		}
-		removed, err := install.Remove(args[1])
-		if err != nil {
-			return err
-		}
-		versions := make([]string, 0, len(removed))
-		for _, record := range removed {
-			versions = append(versions, record.Version)
-		}
-		fmt.Printf("Removed %s (%s)\n", removed[0].Name, strings.Join(versions, ", "))
-		fmt.Println("Shared runtime caches were kept for other packages.")
-		return nil
+		return projectRemoveCommand(args[1:])
 
 	case "info":
 		if len(args) != 2 {
@@ -338,8 +328,6 @@ func syncCommand(args []string) error {
 		return fmt.Errorf("%s contains no packages; add one with 'prl add <package>'", path)
 	}
 
-	// Preflight every package before downloading or replacing anything. This
-	// avoids a predictable unsupported-platform error halfway through a sync.
 	for _, pkg := range file.Packages {
 		if _, err := registry.ArtifactFor(pkg, runtime.GOOS, runtime.GOARCH); err != nil {
 			return fmt.Errorf("lockfile package %s: %w", pkg.Name, err)
@@ -365,9 +353,6 @@ func syncCommand(args []string) error {
 	return nil
 }
 
-// resolveForLockfile stores a portable package definition, including every
-// supported release artifact. One-off GitHub installs intentionally keep their
-// faster, current-platform-only resolution path.
 func resolveForLockfile(target string) (registry.Package, error) {
 	if strings.HasPrefix(strings.ToLower(target), "github:") {
 		repo := strings.TrimSpace(target[len("github:"):])
@@ -398,8 +383,6 @@ func resolveForLockfile(target string) (registry.Package, error) {
 	return registry.Find(target)
 }
 
-// ensureInstalled installs the exact package definition supplied by the
-// lockfile. It never re-resolves a locked package against the live registry.
 func ensureInstalled(pkg registry.Package) (bool, error) {
 	current, err := install.IsCurrent(pkg)
 	if err != nil {
@@ -810,15 +793,17 @@ func printHelp() {
 Universal package distribution for open-source software.
 
 Usage:
-  prl install <package>                         Install a registry package and required runtime
-  prl install github:owner/repo                 Install directly from a GitHub Release
-  prl add <package|github:owner/repo>            Install and record a project tool
-  prl sync                                       Install packages pinned in packrail.lock
-  prl lock list                                  List packages in packrail.lock
-  prl lock validate                              Validate packrail.lock structure and metadata
-  prl lock remove <package>                     Remove a project lock entry only
-  prl update [package]                          Update one package or all installed packages
-  prl remove <package>                          Remove a package and its tracked shims/files
+  prl install <package>                         One-off global install from the registry
+  prl install github:owner/repo                 One-off global install from a GitHub Release
+  prl init                                      Create packrail.json (or migrate a v0.9 lock-only project)
+  prl add <package[@constraint]>                Add project intent, resolve, install, and lock it
+  prl add github:owner/repo[@constraint]        Add a direct-GitHub project dependency
+  prl sync                                      Install exactly what packrail.lock records; never re-resolve
+  prl update [package ...]                      Explicitly re-resolve project deps (global update outside projects)
+  prl remove <package> [--uninstall]            Remove project intent/lock; optionally uninstall globally
+  prl lock list                                 List packages in packrail.lock
+  prl lock validate                             Validate packrail.lock structure and metadata
+  prl lock remove <package>                     Low-level lockfile-only removal
   prl search [query]                            Search the GitHub-backed registry
   prl info <package>                            Show package and platform metadata
   prl package inspect <github-repo>             Inspect a GitHub Release for Packrail assets
