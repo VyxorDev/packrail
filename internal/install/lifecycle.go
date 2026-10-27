@@ -81,8 +81,8 @@ func RecordsFor(name string) ([]InstallRecord, error) {
 
 // IsCurrent reports whether the installed package matches the exact locked
 // package metadata and platform artifact, whether its command shim still exists,
-// and, for lockfile v2, whether its managed runtime matches the exact runtime
-// version pinned for this platform. Older records without a metadata fingerprint
+// and, for lockfile v2, whether the complete managed-runtime artifact identity
+// matches the current platform pin. Older records without a metadata fingerprint
 // are reinstalled once.
 func IsCurrent(pkg registry.Package) (bool, error) {
 	artifact, err := registry.ArtifactFor(pkg, runtime.GOOS, runtime.GOARCH)
@@ -97,10 +97,6 @@ func IsCurrent(pkg registry.Package) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("fingerprint package metadata: %w", err)
 	}
-	lockedRuntimeVersion, runtimePinned, err := packruntimes.LockedVersion(pkg.Runtime)
-	if err != nil {
-		return false, err
-	}
 	records, err := RecordsFor(pkg.Name)
 	if err != nil {
 		return false, err
@@ -108,6 +104,17 @@ func IsCurrent(pkg registry.Package) (bool, error) {
 	home, err := Home()
 	if err != nil {
 		return false, err
+	}
+	lockedRuntimeVersion, runtimePinned, err := packruntimes.LockedVersion(pkg.Runtime)
+	if err != nil {
+		return false, err
+	}
+	lockedRuntimeCurrent := false
+	if runtimePinned {
+		lockedRuntimeCurrent, _, err = packruntimes.LockedCurrent(home, pkg.Runtime)
+		if err != nil {
+			return false, err
+		}
 	}
 	entryInfo, err := os.Stat(filepath.Join(home, "packages", pkg.Name, pkg.Version, filepath.FromSlash(entrypoint)))
 	if err != nil || entryInfo.IsDir() {
@@ -132,7 +139,7 @@ func IsCurrent(pkg registry.Package) (bool, error) {
 			!strings.EqualFold(record.Command, pkg.Command.Name) {
 			continue
 		}
-		if runtimePinned && (!record.ManagedRuntime || record.RuntimeVersion != lockedRuntimeVersion) {
+		if runtimePinned && (!record.ManagedRuntime || record.RuntimeVersion != lockedRuntimeVersion || !lockedRuntimeCurrent) {
 			continue
 		}
 		if record.ManagedRuntime {
