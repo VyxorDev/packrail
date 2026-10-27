@@ -103,6 +103,32 @@ func Upsert(file *File, pkg registry.Package) error {
 	return normalizeAndValidate(file)
 }
 
+// Remove deletes a package entry from the project lockfile. It deliberately
+// does not uninstall the package from PACKRAIL_HOME because that installation
+// may be shared by other projects.
+func Remove(file *File, name string) (bool, error) {
+	if file == nil {
+		return false, fmt.Errorf("lockfile is nil")
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false, fmt.Errorf("package name is required")
+	}
+	if err := normalizeAndValidate(file); err != nil {
+		return false, err
+	}
+	for i, pkg := range file.Packages {
+		if strings.EqualFold(pkg.Name, name) {
+			file.Packages = append(file.Packages[:i], file.Packages[i+1:]...)
+			if len(file.Packages) == 0 {
+				file.Packages = []registry.Package{}
+			}
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func Save(path string, file File) error {
 	file.Packages = append([]registry.Package(nil), file.Packages...)
 	if err := normalizeAndValidate(&file); err != nil {

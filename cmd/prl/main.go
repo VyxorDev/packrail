@@ -92,6 +92,9 @@ func run(args []string) error {
 	case "add":
 		return addCommand(args[1:])
 
+	case "lock":
+		return lockCommand(args[1:])
+
 	case "sync":
 		return syncCommand(args[1:])
 
@@ -203,6 +206,70 @@ func run(args []string) error {
 
 	default:
 		return fmt.Errorf("unknown command %q; run 'prl help'", args[0])
+	}
+}
+
+func lockCommand(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: prl lock list|validate|remove <package>")
+	}
+	path, err := lockfile.Path()
+	if err != nil {
+		return err
+	}
+
+	switch args[0] {
+	case "list":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: prl lock list")
+		}
+		file, err := lockfile.Load(path)
+		if err != nil {
+			return err
+		}
+		if len(file.Packages) == 0 {
+			fmt.Println("No project packages locked.")
+			return nil
+		}
+		for _, pkg := range file.Packages {
+			fmt.Printf("%-20s %-12s %s\n", pkg.Name, pkg.Version, pkg.Source)
+		}
+		return nil
+
+	case "validate":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: prl lock validate")
+		}
+		file, err := lockfile.Load(path)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Lockfile valid: %d packages (version %d).\n", len(file.Packages), file.LockfileVersion)
+		return nil
+
+	case "remove":
+		if len(args) != 2 || strings.TrimSpace(args[1]) == "" {
+			return fmt.Errorf("usage: prl lock remove <package>")
+		}
+		file, err := lockfile.Load(path)
+		if err != nil {
+			return err
+		}
+		removed, err := lockfile.Remove(&file, args[1])
+		if err != nil {
+			return err
+		}
+		if !removed {
+			return fmt.Errorf("package %q is not in %s", args[1], path)
+		}
+		if err := lockfile.Save(path, file); err != nil {
+			return fmt.Errorf("save lockfile after removing %s: %w", args[1], err)
+		}
+		fmt.Printf("Removed %s from the project lockfile. The global installation was left untouched.\n", args[1])
+		return nil
+
+	default:
+		return fmt.Errorf("unknown lock command %q; use list, validate, or remove", args[0])
 	}
 }
 
@@ -743,6 +810,9 @@ Usage:
   prl install github:owner/repo                 Install directly from a GitHub Release
   prl add <package|github:owner/repo>            Install and record a project tool
   prl sync                                       Install packages pinned in packrail.lock
+  prl lock list                                  List packages in packrail.lock
+  prl lock validate                              Validate packrail.lock structure and metadata
+  prl lock remove <package>                     Remove a project lock entry only
   prl update [package]                          Update one package or all installed packages
   prl remove <package>                          Remove a package and its tracked shims/files
   prl search [query]                            Search the GitHub-backed registry

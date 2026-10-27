@@ -237,7 +237,12 @@ jobs:
           PACKRAIL_HOME="$RUNNER_TEMP/packrail-add" ./prl add ripgrep
           test -f packrail.lock
           grep -q '"lockfile_version": 1' packrail.lock
+          ./prl lock list | grep -q 'ripgrep'
+          ./prl lock validate | grep -q 'Lockfile valid: 1 packages (version 1)'
           PACKRAIL_HOME="$RUNNER_TEMP/packrail-sync" ./prl sync | tee sync-first.txt
           grep -q 'Installed ripgrep 15.2.0' sync-first.txt
           PACKRAIL_HOME="$RUNNER_TEMP/packrail-sync" ./prl sync | tee sync-second.txt
           grep -q 'Already in sync: ripgrep 15.2.0' sync-second.txt
+          ./prl lock remove ripgrep
+          grep -q '"packages": []' packrail.lock
+          test -x "$RUNNER_TEMP/packrail-add/bin/rg"

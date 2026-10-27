@@ -54,13 +54,16 @@ Use `prl add` from a project directory to install a tool and record its complete
 
     prl add ripgrep
     prl add github:owner/repo
+    prl lock list
+    prl lock validate
     prl sync
 
-`prl install` remains a one-off install and does not edit the current directory. `prl add` creates or updates the project lockfile after a successful install. Commit `packrail.lock` to your project so another machine can run `prl sync` from the same directory.
+`prl install` remains a one-off install and does not edit the current directory. `prl add` creates or updates the project lockfile after a successful install. `prl lock list` shows locked entries, `prl lock validate` checks the file, and `prl lock remove <package>` removes only a lockfile entry; it deliberately leaves the shared global installation untouched. `prl remove <package>` still removes the global installation. Commit `packrail.lock` to your project so another machine can run `prl sync` from the same directory.
 
 Lockfile version 1 stores the package version, source, command/entrypoint metadata, platform artifact URLs, formats, and SHA-256 checksums. `prl sync` uses those saved definitions rather than resolving package versions from the live registry, verifies downloads through the normal installer, and skips matching installs. It does not remove unrelated tools installed globally.
 
 Managed runtime releases are still selected from each package's declared runtime constraint; lockfile version 1 does not yet pin an exact Node/Python/Java/.NET runtime release. Direct `prl add github:owner/repo` requires enough safe metadata to describe the supported platforms; use `prl install github:owner/repo` for a current-platform-only one-off install when the release cannot be locked portably.
+
 ## Registry installs
 
 ```powershell

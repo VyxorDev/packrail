@@ -111,3 +111,59 @@ func TestLoadRejectsDuplicateNames(t *testing.T) {
 		t.Fatalf("expected duplicate-name error, got %v", err)
 	}
 }
+
+
+func TestRemovePackageOnlyChangesLockfileEntries(t *testing.T) {
+	file := New()
+	if err := Upsert(&file, testPackage("alpha", "1.0.0")); err != nil {
+		t.Fatal(err)
+	}
+	if err := Upsert(&file, testPackage("beta", "2.0.0")); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := Remove(&file, "ALPHA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !removed {
+		t.Fatal("expected alpha to be removed")
+	}
+	if len(file.Packages) != 1 || file.Packages[0].Name != "beta" {
+		t.Fatalf("unexpected packages after removal: %#v", file.Packages)
+	}
+}
+
+func TestRemoveMissingPackageReturnsFalse(t *testing.T) {
+	file := New()
+	if err := Upsert(&file, testPackage("alpha", "1.0.0")); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := Remove(&file, "missing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed {
+		t.Fatal("missing package should not be reported as removed")
+	}
+	if len(file.Packages) != 1 || file.Packages[0].Name != "alpha" {
+		t.Fatalf("lockfile changed after removing a missing package: %#v", file.Packages)
+	}
+}
+
+func TestRemoveLastPackageKeepsEmptyArray(t *testing.T) {
+	file := New()
+	if err := Upsert(&file, testPackage("alpha", "1.0.0")); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := Remove(&file, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !removed {
+		t.Fatal("expected alpha to be removed")
+	}
+	if file.Packages == nil || len(file.Packages) != 0 {
+		t.Fatalf("expected an empty, non-nil package list; got %#v", file.Packages)
+	}
+}
