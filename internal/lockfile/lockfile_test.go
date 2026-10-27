@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/VyxorDev/packrail/internal/registry"
+	packruntimes "github.com/VyxorDev/packrail/internal/runtimes"
 )
 
 func testPackage(name, version string) registry.Package {
@@ -39,6 +40,9 @@ func TestUpsertSortsAndReplacesPackage(t *testing.T) {
 	}
 	if err := Upsert(&file, testPackage("ALPHA", "2.0.0")); err != nil {
 		t.Fatal(err)
+	}
+	if file.LockfileVersion != 2 {
+		t.Fatalf("lockfile version = %d, want 2", file.LockfileVersion)
 	}
 	if len(file.Packages) != 2 {
 		t.Fatalf("got %d packages, want 2", len(file.Packages))
@@ -78,18 +82,91 @@ func TestLoadOrEmptyWhenMissing(t *testing.T) {
 	if existed {
 		t.Fatal("missing lockfile reported as existing")
 	}
-	if file.LockfileVersion != CurrentVersion || len(file.Packages) != 0 {
+	if file.LockfileVersion != CurrentVersion || len(file.Packages) != 0 || file.Runtimes == nil {
 		t.Fatalf("unexpected empty lockfile: %#v", file)
 	}
 }
 
 func TestLoadRejectsUnsupportedVersion(t *testing.T) {
 	path := filepath.Join(t.TempDir(), FileName)
-	if err := os.WriteFile(path, []byte("{\"lockfile_version\":2,\"packages\":[]}"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("{\"lockfile_version\":3,\"packages\":[]}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "unsupported lockfile_version") {
 		t.Fatalf("expected unsupported-version error, got %v", err)
+	}
+}
+
+func TestLoadAcceptsVersionOneWithoutRuntimePins(t *testing.T) {
+	pkg := testPackage("legacy", "1.0.0")
+	pkg.Runtime = registry.Runtime{Name: "node", Constraint: ">=20", Command: "node"}
+	file := File{LockfileVersion: 1, Packages: []registry.Package{pkg}}
+	data, err := json.Marshal(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), FileName)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LockfileVersion != 1 || got.Runtimes != nil {
+		t.Fatalf("legacy lockfile was not preserved: %#v", got)
+	}
+}
+
+func TestLoadValidatesVersionTwoRuntimePins(t *testing.T) {
+	pkg := testPackage("runtime-tool", "1.0.0")
+	pkg.Runtime = registry.Runtime{Name: "node", Constraint: ">=20", Command: "node"}
+	artifacts := map[string]packruntimes.Pin{}
+	for _, platform := range packruntimes.ManagedPlatforms() {
+		executable := "node"
+		format := "tgz"
+		if strings.HasPrefix(platform, "windows-") {
+			executable = "node.exe"
+			format = "zip"
+		}
+		artifacts[platform] = packruntimes.Pin{
+			Version:     "24.11.1",
+			URL:         "https://example.com/node-" + platform + "." + format,
+			SHA256:      strings.Repeat("a", 64),
+			Format:      format,
+			Executables: []string{executable},
+		}
+	}
+	key := packruntimes.SpecKey(pkg.Runtime)
+	file := File{
+		LockfileVersion: 2,
+		Packages:        []registry.Package{pkg},
+		Runtimes: map[string]packruntimes.LockedRuntime{
+			key: {Name: "node", Constraint: ">=20", Command: "node", Artifacts: artifacts},
+		},
+	}
+	data, err := json.Marshal(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), FileName)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err != nil {
+		t.Fatal(err)
+	}
+
+	delete(file.Runtimes[key].Artifacts, "linux-amd64")
+	data, err = json.Marshal(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "missing pin") {
+		t.Fatalf("expected missing runtime pin error, got %v", err)
 	}
 }
 
@@ -112,7 +189,6 @@ func TestLoadRejectsDuplicateNames(t *testing.T) {
 	}
 }
 
-
 func TestRemovePackageOnlyChangesLockfileEntries(t *testing.T) {
 	file := New()
 	if err := Upsert(&file, testPackage("alpha", "1.0.0")); err != nil {
@@ -121,7 +197,6 @@ func TestRemovePackageOnlyChangesLockfileEntries(t *testing.T) {
 	if err := Upsert(&file, testPackage("beta", "2.0.0")); err != nil {
 		t.Fatal(err)
 	}
-
 	removed, err := Remove(&file, "ALPHA")
 	if err != nil {
 		t.Fatal(err)
@@ -167,7 +242,6 @@ func TestRemoveLastPackageKeepsEmptyArray(t *testing.T) {
 		t.Fatalf("expected an empty, non-nil package list; got %#v", file.Packages)
 	}
 }
-
 
 func TestLoadRejectsPathTraversingVersion(t *testing.T) {
 	file := New()
