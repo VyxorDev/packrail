@@ -230,15 +230,15 @@ jobs:
       - name: Build prl
         run: go build -o prl ./cmd/prl
 
-      - name: Add a package, sync into a clean Packrail home, and prove idempotence
+      - name: Add a native package, sync into a clean Packrail home, and prove idempotence
         shell: bash
         run: |
           set -euo pipefail
           PACKRAIL_HOME="$RUNNER_TEMP/packrail-add" ./prl add ripgrep
           test -f packrail.lock
-          grep -q '"lockfile_version": 1' packrail.lock
+          grep -q '"lockfile_version": 2' packrail.lock
           ./prl lock list | grep -q 'ripgrep'
-          ./prl lock validate | grep -q 'Lockfile valid: 1 package (version 1)'
+          ./prl lock validate | grep -q 'Lockfile valid: 1 package (version 2)'
           PACKRAIL_HOME="$RUNNER_TEMP/packrail-sync" ./prl sync | tee sync-first.txt
           grep -q 'Installed ripgrep 15.2.0' sync-first.txt
           PACKRAIL_HOME="$RUNNER_TEMP/packrail-sync" ./prl sync | tee sync-second.txt
@@ -246,3 +246,62 @@ jobs:
           ./prl lock remove ripgrep
           grep -Fq '"packages": []' packrail.lock
           test -x "$RUNNER_TEMP/packrail-add/bin/rg"
+
+  lockfile-runtime-smoke:
+    name: lockfile-runtime-${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: true
+
+      - name: Build prl on Unix
+        if: runner.os != 'Windows'
+        run: go build -o prl ./cmd/prl
+
+      - name: Build prl on Windows
+        if: runner.os == 'Windows'
+        run: go build -o prl.exe ./cmd/prl
+
+      - name: Add and sync a runtime package from v2 lockfile on Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          PACKRAIL_HOME="$RUNNER_TEMP/packrail-runtime-add" ./prl add starterqueue
+          grep -q '"lockfile_version": 2' packrail.lock
+          grep -q '"runtimes"' packrail.lock
+          grep -q '"node|>=20|node"' packrail.lock
+          add_version="$(python3 -c 'import json; print(json.load(open("packrail.lock"))["runtimes"]["node|>=20|node"]["artifacts"][{"Linux":"linux","macOS":"darwin"}.get("${{ runner.os }}","linux")+"-amd64"]["version"])')"
+          PACKRAIL_HOME="$RUNNER_TEMP/packrail-runtime-sync" ./prl sync
+          sync_version="$(python3 -c 'import json; print(json.load(open("'"$RUNNER_TEMP"'/packrail-runtime-sync/packages/starterqueue/0.5.0/.packrail.json"))["runtime_version"])')"
+          test "$add_version" = "$sync_version"
+          test -x "$RUNNER_TEMP/packrail-runtime-sync/bin/starterqueue"
+
+      - name: Add and sync a runtime package from v2 lockfile on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:PACKRAIL_HOME = Join-Path $env:RUNNER_TEMP 'packrail-runtime-add'
+          .\prl.exe add starterqueue
+          $lock = Get-Content .\packrail.lock -Raw | ConvertFrom-Json
+          if ($lock.lockfile_version -ne 2) { throw 'expected lockfile v2' }
+          $key = 'node|>=20|node'
+          $pin = $lock.runtimes.$key.artifacts.'windows-amd64'
+          if (-not $pin.version) { throw 'missing Windows Node runtime pin' }
+          $env:PACKRAIL_HOME = Join-Path $env:RUNNER_TEMP 'packrail-runtime-sync'
+          .\prl.exe sync
+          $record = Get-Content "$env:PACKRAIL_HOME\packages\starterqueue\0.5.0\.packrail.json" -Raw | ConvertFrom-Json
+          if ($record.runtime_version -ne $pin.version) { throw "runtime drift: lock=$($pin.version) installed=$($record.runtime_version)" }
+          if (-not (Test-Path "$env:PACKRAIL_HOME\bin\starterqueue.cmd")) { throw 'starterqueue shim missing' }
