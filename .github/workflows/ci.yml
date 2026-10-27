@@ -274,7 +274,7 @@ jobs:
           $manifest = Get-Content .\packrail.json -Raw | ConvertFrom-Json
           if ($manifest.dependencies.ripgrep.constraint -ne '15.2.0') { throw 'manifest constraint missing' }
           $lock = Get-Content .\packrail.lock -Raw | ConvertFrom-Json
-          if ($lock.lockfile_version -ne 2 -or $lock.packages.Count -ne 1) { throw 'lockfile state invalid' }
+          if ($lock.lockfile_version -ne 2 -or @($lock.packages).Count -ne 1) { throw 'lockfile state invalid' }
           $env:PACKRAIL_HOME = Join-Path $env:RUNNER_TEMP 'packrail-project-sync'
           $first = (.\prl.exe sync) -join "`n"
           if ($first -notmatch '1 installed/updated, 0 already in sync') { throw "unexpected first sync: $first" }
@@ -285,8 +285,8 @@ jobs:
           .\prl.exe remove ripgrep
           $manifest = Get-Content .\packrail.json -Raw | ConvertFrom-Json
           $lock = Get-Content .\packrail.lock -Raw | ConvertFrom-Json
-          if ($manifest.dependencies.PSObject.Properties.Count -ne 0) { throw 'manifest dependency was not removed' }
-          if ($lock.packages.Count -ne 0) { throw 'lock package was not removed' }
+          if (@($manifest.dependencies.PSObject.Properties).Count -ne 0) { throw 'manifest dependency was not removed' }
+          if (@($lock.packages).Count -ne 0) { throw 'lock package was not removed' }
           $empty = (.\prl.exe sync) -join "`n"
           if ($empty -notmatch 'Nothing to sync') { throw "unexpected empty sync: $empty" }
           if (-not (Test-Path (Join-Path $env:RUNNER_TEMP 'packrail-project-add\bin\rg.cmd'))) { throw 'default project remove uninstalled the shared package' }
