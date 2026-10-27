@@ -7,24 +7,25 @@ Packrail is an experimental, Git-native distribution layer for open-source comma
 ```powershell
 prl install ripgrep
 prl install github:BurntSushi/ripgrep
-prl install github:VyxorDev/starterqueue
-prl package submit owner/tool
+prl init
+prl add ripgrep@15.2.0
+prl sync
 prl update
-prl remove ripgrep
+prl package submit owner/tool
 prl self update
 ```
 
 ## Status
 
-Packrail is in **v0.9.0-alpha development**. The latest published installer release remains **v0.8.0-alpha** until v0.9 release assets are published.
+The Packrail CLI still reports **v0.9.0-alpha** while the next project-manifest architecture is being developed on `main`. The latest published installer release remains **v0.8.0-alpha** until newer release assets are deliberately published.
 
 The user-side flow is:
 
-`package name or GitHub repository -> platform resolve -> runtime resolve -> verified download -> safe extract -> launcher -> run -> update/remove`
+`dependency intent -> package/runtime resolution -> verified immutable lock -> safe install -> launcher -> sync/update/remove`
 
 The publisher-side flow is:
 
-`GitHub repository -> latest Release -> detect artifacts -> infer metadata/runtime/entrypoint -> validate provenance -> create registry manifest/index update -> GitHub PR`
+`GitHub repository -> Release -> detect artifacts -> infer metadata/runtime/entrypoint -> validate provenance -> create registry manifest/index update -> GitHub PR`
 
 ## Install Packrail
 
@@ -48,30 +49,114 @@ The Unix installer selects Linux/macOS and x64/ARM64 automatically, verifies the
 
 Set `PACKRAIL_INSTALL_DIR` before running either script to choose another destination.
 
-## Project lockfiles (v0.9 alpha)
+## Project manifests and lockfiles (v0.10 development)
 
-Use `prl add` from a project directory to install a tool and record its complete resolved package metadata in `packrail.lock`:
+Packrail now separates **what a project asks for** from **what Packrail resolved**:
 
-    prl add ripgrep
-    prl add starterqueue
-    prl add github:owner/repo
-    prl lock list
-    prl lock validate
-    prl sync
+```text
+packrail.json  -> human-editable dependency intent
+packrail.lock  -> machine-generated exact resolved state
+```
 
-`prl install` remains a one-off install and does not edit the current directory. `prl add` creates or updates the project lockfile after a successful install. `prl lock list` shows locked entries, `prl lock validate` checks the file, and `prl lock remove <package>` removes only a lockfile entry; it deliberately leaves the shared global installation untouched. `prl remove <package>` still removes the global installation. Commit `packrail.lock` to your project so another machine can run `prl sync` from the same directory.
+Start a project and add tools:
+
+```powershell
+prl init
+prl add ripgrep
+prl add ripgrep@15.2.0
+prl add starterqueue
+prl add github:owner/repo
+prl sync
+```
+
+A generated `packrail.json` uses schema version 1. For example:
+
+```json
+{
+  "manifest_version": 1,
+  "dependencies": {
+    "ripgrep": {
+      "constraint": "^15"
+    },
+    "starterqueue": {
+      "constraint": "*",
+      "repo": "VyxorDev/starterqueue"
+    }
+  }
+}
+```
+
+The loader also accepts a concise string form such as `"ripgrep": "^15"`; Packrail currently writes the explicit object form so direct source identity can use the same schema.
+
+`prl install` remains a one-off/global install and never edits project files. In a normal project, `prl add` resolves the requested dependency, validates the prospective lock state, installs it safely, and only then commits the project metadata. Fresh directories can use `prl add` directly; `prl init` is useful when creating an empty manifest or explicitly migrating a v0.9 lockfile-only project.
+
+### Exact sync vs explicit update
+
+`prl sync` is deliberately boring: it validates `packrail.json` against `packrail.lock` and installs **exactly** what the lockfile says. It does not ask the registry or a runtime provider for a newer version, and it does not rewrite the lock merely because a newer release exists.
+
+```powershell
+prl sync
+```
+
+Re-resolution is explicit:
+
+```powershell
+prl update
+prl update ripgrep
+prl update ripgrep starterqueue
+```
+
+Inside a project, `prl update` resolves the existing manifest constraints again and updates `packrail.lock`; the dependency intent in `packrail.json` remains unchanged. Outside a manifest project, the existing global `prl update [package]` behavior remains available.
+
+If the manifest and lockfile disagree, `prl sync` refuses to guess or silently repair them. Use `prl update` to deliberately resolve current intent into a new lockfile.
+
+### Removing project dependencies
+
+```powershell
+prl remove ripgrep
+prl remove ripgrep --uninstall
+```
+
+Inside a project, normal `prl remove` removes the dependency from `packrail.json` and its resolved lock entry but deliberately leaves the shared/global Packrail installation intact. `--uninstall` explicitly removes that shared installation too. Outside a manifest project, `prl remove <package>` retains the historical global-uninstall behavior.
+
+`prl lock list`, `prl lock validate`, and `prl lock remove` remain low-level lockfile tools. For normal manifest projects prefer `prl remove`; manually editing/removing only a lock entry can intentionally make the manifest and lock disagree, which `prl sync` will detect and reject.
+
+### Version constraints and registry history
+
+The project manifest currently understands a deliberately small dependency grammar:
+
+```text
+*
+15.2.0
+^15.2.0
+>=15.2.0
+```
+
+This syntax does **not** pretend Packrail already has npm-style historical registry storage. The current Packrail registry publishes one resolved version per package. A registry request succeeds only if that published version satisfies the requested constraint; Packrail returns an explicit error instead of silently substituting another version when it does not.
+
+Direct GitHub dependencies have a stronger exact-version path. An exact request such as:
+
+```powershell
+prl add github:owner/repo@1.2.3
+```
+
+can inspect the matching GitHub Release tag and lock that historical release when its metadata and artifacts can be inferred safely. Non-exact direct GitHub constraints are checked against the current resolved release.
+
+### v0.9 migration and transaction recovery
+
+Existing **lockfile-only** projects remain valid: `prl sync` continues to sync them without requiring a manifest. Running `prl init` beside an existing v0.9 `packrail.lock` creates `packrail.json` using the exact locked package versions as intent. It does not invent wildcard/caret ranges or claim direct-source intent that the old lockfile cannot prove.
+
+Operations that change both project files use a small recovery journal (`.packrail.transaction`). The old manifest/lock bytes are recorded before commit. If the second file cannot be committed, Packrail restores the old pair; if a process is interrupted with a prepared journal, the next project operation restores the previously valid state before doing new work. Package installation itself occurs before the metadata commit and uses Packrail's existing checksum/extraction recovery machinery.
 
 ### Lockfile v2 reproducibility
 
 Lockfile version 2 pins the package version, source, command/entrypoint metadata, platform artifact URLs, formats, and package checksums. For packages that use a Packrail-managed runtime, it also records the exact Node.js, Python, Java, or .NET runtime artifact for each supported target platform: exact runtime version, immutable download URL, checksum, archive format, and executable metadata.
 
-`prl sync` loads those saved definitions and installs from the lockfile rather than asking the live registry or runtime provider to choose a newer compatible release. A matching package/runtime installation is skipped; if the runtime pin changes, sync treats the old installation as stale and reconciles it to the newly pinned version.
+A matching package/runtime installation is skipped. If the exact runtime pin identity changes, including its URL/checksum, sync treats the old installation as stale rather than accepting version-only equality.
 
-Version 1 lockfiles remain readable for compatibility. Because v1 did not contain exact runtime artifacts, managed runtimes in a v1 file retain the original constraint-based resolution behavior. Running `prl add` against that project upgrades the file to v2 and resolves the exact runtime pins.
+Version 1 lockfiles remain readable for compatibility. Because v1 did not contain exact runtime artifacts, managed runtimes in a v1 file retain the historical constraint-based runtime resolution behavior until the project is deliberately rewritten into newer locked state.
 
 Runtime and package downloads are verified before replacement. Failed checksum verification, unsafe archives, failed extraction, or an unavailable runtime artifact do not intentionally delete a previously working package/runtime installation. Shared managed runtimes remain cached because other projects may still depend on them.
-
-Direct `prl add github:owner/repo` requires enough safe metadata to describe the supported platforms; use `prl install github:owner/repo` for a current-platform-only one-off install when the release cannot be locked portably.
 
 ## Registry installs
 
@@ -100,7 +185,7 @@ prl install github:BurntSushi/ripgrep
 prl install github:VyxorDev/starterqueue
 ```
 
-For direct installs Packrail inspects only the current machine's release artifact. It can infer conventional platform names, prefer normal GNU Linux artifacts over musl variants, detect a unique native executable even when the repository name differs from the command (`ripgrep` -> `rg`), and reuse runtime inference for supported script/runtime layouts.
+For one-off direct installs Packrail inspects the current machine's release artifact. It can infer conventional platform names, prefer normal GNU Linux artifacts over musl variants, detect a unique native executable even when the repository name differs from the command (`ripgrep` -> `rg`), and reuse runtime inference for supported script/runtime layouts.
 
 A direct install is refused when Packrail cannot infer the release safely. It does not silently guess through ambiguous archives.
 
@@ -141,7 +226,9 @@ native-executable
 
 Packrail currently infers obvious `.py`, `.jar`, and command-matching `.dll` entrypoints conservatively. Node/npm-style tarballs still have the richest metadata inference because `package.json` directly describes their CLI and Node requirement.
 
-## Update, remove, and self-update
+## Global update, remove, and self-update
+
+Outside a project manifest, the existing global package commands remain available:
 
 ```powershell
 prl update ripgrep
@@ -222,9 +309,9 @@ Runtime downloads are checksum-verified and stored under Packrail's private runt
 
 ## Safety model
 
-Packrail deliberately avoids arbitrary post-install package scripts. Downloads are checksum-verified, archive extraction rejects path traversal, ZIP symlinks are rejected, and TGZ symlink/hardlink entries are rejected. Package names, versions, command names, entrypoints, and v2 runtime pins are validated before they can become filesystem paths or download targets.
+Packrail deliberately avoids arbitrary post-install package scripts. Downloads are checksum-verified, archive extraction rejects path traversal, ZIP symlinks are rejected, and TGZ symlink/hardlink entries are rejected. Package names, versions, command names, entrypoints, manifest dependency identifiers, and v2 runtime pins are validated before they can become filesystem paths or download targets.
 
-GitHub-backed package manifests use HTTPS sources and artifacts. Registry validation binds GitHub release artifacts to the package source repository. Lockfile v2 runtime artifacts also require HTTPS URLs and valid published checksums before installation.
+`packrail.json` and `packrail.lock` are treated as untrusted project input. Unknown manifest fields are rejected, direct GitHub identifiers are validated, manifest/lock agreement is checked before project sync, and exact GitHub artifact provenance remains bound to the package source repository. Lockfile v2 runtime artifacts require HTTPS URLs and published checksums before installation.
 
 ## Environment variables
 
@@ -251,6 +338,6 @@ go vet ./...
 go build ./cmd/prl
 ```
 
-CI runs tests, vet/build, publisher/registry smoke tests, managed runtime installation, lifecycle checks, native package installation, native lockfile sync, and managed-runtime lockfile sync across Windows, Linux, and macOS.
+CI runs tests, vet/build, publisher/registry smoke tests, managed runtime installation, global lifecycle checks, native package installation, project manifest lifecycle tests, and managed-runtime lockfile sync across Windows, Linux, and macOS.
 
-Packrail is still alpha software. Manifest inference is intentionally conservative, runtime version constraints are not yet a complete semver solver, runtime garbage collection is not implemented yet, and direct GitHub installation refuses ambiguous releases instead of guessing.
+Packrail is still alpha software. Manifest/release inference is intentionally conservative, dependency constraints intentionally cover only a small useful subset rather than a complete semver solver, the registry does not yet retain historical versions, runtime/package garbage collection is not implemented yet, and direct GitHub installation refuses ambiguous releases instead of guessing.
