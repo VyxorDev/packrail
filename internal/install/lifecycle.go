@@ -87,6 +87,10 @@ func IsCurrent(pkg registry.Package) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	entrypoint, err := registry.EntrypointFor(pkg, artifact)
+	if err != nil {
+		return false, err
+	}
 	fingerprint, err := packageMetadataSHA256(pkg)
 	if err != nil {
 		return false, fmt.Errorf("fingerprint package metadata: %w", err)
@@ -98,6 +102,10 @@ func IsCurrent(pkg registry.Package) (bool, error) {
 	home, err := Home()
 	if err != nil {
 		return false, err
+	}
+	entryInfo, err := os.Stat(filepath.Join(home, "packages", pkg.Name, pkg.Version, filepath.FromSlash(entrypoint)))
+	if err != nil || entryInfo.IsDir() {
+		return false, nil
 	}
 	shimName := pkg.Command.Name
 	if runtime.GOOS == "windows" {

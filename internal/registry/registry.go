@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -333,6 +334,9 @@ func decodeAndValidate(data []byte) ([]Package, error) {
 			if strings.TrimSpace(artifact.Entrypoint) == "" && strings.TrimSpace(pkg.Command.Entrypoint) == "" {
 				return nil, fmt.Errorf("package %s artifact %s has no entrypoint", pkg.Name, platform)
 			}
+			if _, err := EntrypointFor(*pkg, artifact); err != nil {
+				return nil, fmt.Errorf("package %s artifact %s entrypoint: %w", pkg.Name, platform, err)
+			}
 		}
 	}
 	sort.Slice(packages, func(i, j int) bool { return packages[i].Name < packages[j].Name })
@@ -396,7 +400,19 @@ func EntrypointFor(pkg Package, artifact Artifact) (string, error) {
 	if entrypoint == "" {
 		return "", fmt.Errorf("package %s does not define an entrypoint", pkg.Name)
 	}
-	return entrypoint, nil
+	normalized := strings.ReplaceAll(entrypoint, "\\", "/")
+	if strings.ContainsRune(normalized, '\x00') || strings.HasPrefix(normalized, "/") {
+		return "", fmt.Errorf("entrypoint %q must be a safe relative path", entrypoint)
+	}
+	clean := path.Clean(normalized)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("entrypoint %q escapes the package root", entrypoint)
+	}
+	firstSegment := strings.SplitN(clean, "/", 2)[0]
+	if strings.Contains(firstSegment, ":") {
+		return "", fmt.Errorf("entrypoint %q must be a safe relative path", entrypoint)
+	}
+	return clean, nil
 }
 
 func Platforms(pkg Package) []string {

@@ -57,6 +57,35 @@ func TestArtifactForUnsupportedPlatform(t *testing.T) {
 	}
 }
 
+func TestEntrypointForRejectsUnsafePaths(t *testing.T) {
+	pkg := Package{Name: "demo", Command: Command{Name: "demo"}}
+	unsafe := []string{
+		"../outside",
+		"../../outside",
+		"/etc/passwd",
+		"C:\\Windows\\system32",
+		"\\\\server\\share\\tool",
+		"folder/../../outside",
+	}
+	for _, entrypoint := range unsafe {
+		if _, err := EntrypointFor(pkg, Artifact{Entrypoint: entrypoint}); err == nil {
+			t.Errorf("EntrypointFor(%q) unexpectedly succeeded", entrypoint)
+		}
+	}
+}
+
+func TestDecodeRejectsUnsafeEntrypoint(t *testing.T) {
+	manifest := strings.Replace(
+		testRegistryJSON("unsafe-tool", "1.0.0"),
+		`"entrypoint": "package/tool"",
+		`"entrypoint": "../escape"",
+		1,
+	)
+	if _, err := decodeAndValidate([]byte(manifest)); err == nil {
+		t.Fatal("expected unsafe entrypoint to be rejected")
+	}
+}
+
 func TestSearch(t *testing.T) {
 	t.Setenv("PACKRAIL_HOME", t.TempDir())
 	matches, err := Search("queue")
