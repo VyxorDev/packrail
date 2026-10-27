@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -76,10 +77,6 @@ func LoadOrNew(path string) (File, bool, error) {
 	if errors.Is(err, os.ErrNotExist) {
 		return New(), false, nil
 	}
-	// Load wraps os.ErrNotExist, so errors.Is still works through the wrapper.
-	if errors.Is(err, os.ErrNotExist) {
-		return New(), false, nil
-	}
 	return File{}, false, err
 }
 
@@ -93,16 +90,12 @@ func Decode(data []byte) (File, error) {
 	if err := dec.Decode(&raw); err != nil {
 		return File{}, err
 	}
-	if dec.More() {
-		return File{}, fmt.Errorf("manifest contains trailing JSON values")
-	}
 	var extra any
-	if err := dec.Decode(&extra); err != nil && !errors.Is(err, os.ErrClosed) {
-		// json.Decoder returns io.EOF for the expected end; any non-EOF error is
-		// handled below by a small helper instead of accepting trailing garbage.
-		if err.Error() != "EOF" {
-			return File{}, fmt.Errorf("trailing manifest data: %w", err)
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return File{}, fmt.Errorf("manifest contains trailing JSON values")
 		}
+		return File{}, fmt.Errorf("trailing manifest data: %w", err)
 	}
 	file := File{ManifestVersion: raw.ManifestVersion, Dependencies: map[string]Dependency{}}
 	for name, value := range raw.Dependencies {
@@ -128,6 +121,13 @@ func decodeDependency(data []byte) (Dependency, error) {
 	var dep Dependency
 	if err := dec.Decode(&dep); err != nil {
 		return Dependency{}, fmt.Errorf("expected a version string or dependency object: %w", err)
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return Dependency{}, fmt.Errorf("dependency object contains trailing JSON values")
+		}
+		return Dependency{}, err
 	}
 	return dep, nil
 }
@@ -271,8 +271,6 @@ func writeAtomic(path string, data []byte) error {
 	if err := os.Rename(tmpPath, path); err == nil {
 		return nil
 	}
-	// Windows cannot rename over an existing destination. Keep the replacement
-	// in the same directory and only remove the old file at final commit time.
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
