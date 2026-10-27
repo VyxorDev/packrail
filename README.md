@@ -213,7 +213,7 @@ Runtime downloads are checksum-verified and stored under Packrail's private runt
 
 ## Safety model
 
-Packrail deliberately avoids arbitrary post-install package scripts. Downloads are SHA-256 verified, archive extraction rejects path traversal, ZIP symlinks are rejected, and TGZ symlink/hardlink entries are rejected.
+Packrail deliberately avoids arbitrary post-install package scripts. Downloads are SHA-256 verified, archive extraction rejects path traversal, ZIP symlinks are rejected, and TGZ symlink/hardlink entries are rejected. Package names, versions, command names, and entrypoints are also validated before they can become filesystem paths, including when `prl sync` reads a project lockfile.
 
 GitHub-backed package manifests use HTTPS sources and artifacts. Registry validation binds GitHub release artifacts to the package source repository.
 
