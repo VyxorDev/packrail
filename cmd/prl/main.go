@@ -244,7 +244,11 @@ func lockCommand(args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Lockfile valid: %d packages (version %d).\n", len(file.Packages), file.LockfileVersion)
+		unit := "packages"
+		if len(file.Packages) == 1 {
+			unit = "package"
+		}
+		fmt.Printf("Lockfile valid: %d %s (version %d).\n", len(file.Packages), unit, file.LockfileVersion)
 		return nil
 
 	case "remove":
