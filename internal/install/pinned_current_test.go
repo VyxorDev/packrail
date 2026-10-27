@@ -43,20 +43,19 @@ func TestIsCurrentRejectsRuntimeVersionDriftFromV2Pin(t *testing.T) {
 		executable = "node.exe"
 		format = "zip"
 	}
+	pin := packruntimes.Pin{
+		Version:     "24.11.1",
+		URL:         "https://example.com/node-runtime." + format,
+		SHA256:      strings.Repeat("b", 64),
+		Format:      format,
+		Executables: []string{executable},
+	}
 	packruntimes.ConfigureLockedRuntimes(map[string]packruntimes.LockedRuntime{
 		packruntimes.SpecKey(spec): {
 			Name:       "node",
 			Constraint: spec.Constraint,
 			Command:    spec.Command,
-			Artifacts: map[string]packruntimes.Pin{
-				platform: {
-					Version:     "24.11.1",
-					URL:         "https://example.com/node-runtime." + format,
-					SHA256:      strings.Repeat("b", 64),
-					Format:      format,
-					Executables: []string{executable},
-				},
-			},
+			Artifacts:  map[string]packruntimes.Pin{platform: pin},
 		},
 	})
 	defer packruntimes.ConfigureLockedRuntimes(nil)
@@ -116,12 +115,50 @@ func TestIsCurrentRejectsRuntimeVersionDriftFromV2Pin(t *testing.T) {
 		t.Fatal("install with stale runtime version was incorrectly considered current")
 	}
 
-	writeRecordVersion("24.11.1")
+	writeRecordVersion(pin.Version)
+	runtimeDir := filepath.Join(home, "runtimes", "node", pin.Version, platform)
+	if err := os.MkdirAll(filepath.Join(runtimeDir, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runtimeDir, "bin", executable), []byte("runtime"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker, err := json.Marshal(map[string]string{
+		"version": pin.Version,
+		"url":     pin.URL,
+		"sha256":  pin.SHA256,
+		"format":  pin.Format,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runtimeDir, ".packrail-runtime.json"), marker, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	current, err = IsCurrent(pkg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !current {
-		t.Fatal("install matching the exact locked runtime version should be current")
+		t.Fatal("install matching the complete locked runtime pin should be current")
+	}
+
+	// Same version but a different checksum must still invalidate the install.
+	pin.SHA256 = strings.Repeat("c", 64)
+	packruntimes.ConfigureLockedRuntimes(map[string]packruntimes.LockedRuntime{
+		packruntimes.SpecKey(spec): {
+			Name:       "node",
+			Constraint: spec.Constraint,
+			Command:    spec.Command,
+			Artifacts:  map[string]packruntimes.Pin{platform: pin},
+		},
+	})
+	current, err = IsCurrent(pkg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current {
+		t.Fatal("install with same runtime version but different locked checksum was incorrectly considered current")
 	}
 }
