@@ -142,7 +142,17 @@ func parseVersion(input string) (parsedVersion, error) {
 	if value == "" {
 		return parsedVersion{}, fmt.Errorf("version is empty")
 	}
+	if strings.Count(value, "+") > 1 {
+		return parsedVersion{}, fmt.Errorf("version has multiple build metadata separators")
+	}
 	if plus := strings.IndexByte(value, '+'); plus >= 0 {
+		build := value[plus+1:]
+		if build == "" {
+			return parsedVersion{}, fmt.Errorf("build metadata is empty")
+		}
+		if err := validateVersionIdentifiers(build); err != nil {
+			return parsedVersion{}, fmt.Errorf("invalid build metadata: %w", err)
+		}
 		value = value[:plus]
 	}
 	var pre []string
@@ -151,6 +161,9 @@ func parseVersion(input string) (parsedVersion, error) {
 		value = value[:dash]
 		if preText == "" {
 			return parsedVersion{}, fmt.Errorf("prerelease identifier is empty")
+		}
+		if err := validateVersionIdentifiers(preText); err != nil {
+			return parsedVersion{}, fmt.Errorf("invalid prerelease: %w", err)
 		}
 		pre = strings.Split(preText, ".")
 	}
@@ -172,40 +185,79 @@ func parseVersion(input string) (parsedVersion, error) {
 	return parsedVersion{major: nums[0], minor: nums[1], patch: nums[2], pre: pre}, nil
 }
 
+func validateVersionIdentifiers(value string) error {
+	for _, identifier := range strings.Split(value, ".") {
+		if identifier == "" {
+			return fmt.Errorf("empty identifier")
+		}
+		for _, r := range identifier {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' {
+				continue
+			}
+			return fmt.Errorf("identifier %q contains invalid character %q", identifier, r)
+		}
+	}
+	return nil
+}
+
 func compareParsed(a, b parsedVersion) int {
 	if a.major != b.major {
-		if a.major < b.major { return -1 }
+		if a.major < b.major {
+			return -1
+		}
 		return 1
 	}
 	if a.minor != b.minor {
-		if a.minor < b.minor { return -1 }
+		if a.minor < b.minor {
+			return -1
+		}
 		return 1
 	}
 	if a.patch != b.patch {
-		if a.patch < b.patch { return -1 }
+		if a.patch < b.patch {
+			return -1
+		}
 		return 1
 	}
-	if len(a.pre) == 0 && len(b.pre) == 0 { return 0 }
-	if len(a.pre) == 0 { return 1 }
-	if len(b.pre) == 0 { return -1 }
+	if len(a.pre) == 0 && len(b.pre) == 0 {
+		return 0
+	}
+	if len(a.pre) == 0 {
+		return 1
+	}
+	if len(b.pre) == 0 {
+		return -1
+	}
 	max := len(a.pre)
-	if len(b.pre) > max { max = len(b.pre) }
+	if len(b.pre) > max {
+		max = len(b.pre)
+	}
 	for i := 0; i < max; i++ {
-		if i >= len(a.pre) { return -1 }
-		if i >= len(b.pre) { return 1 }
-		if a.pre[i] == b.pre[i] { continue }
+		if i >= len(a.pre) {
+			return -1
+		}
+		if i >= len(b.pre) {
+			return 1
+		}
+		if a.pre[i] == b.pre[i] {
+			continue
+		}
 		ai, aerr := strconv.Atoi(a.pre[i])
 		bi, berr := strconv.Atoi(b.pre[i])
 		switch {
 		case aerr == nil && berr == nil:
-			if ai < bi { return -1 }
+			if ai < bi {
+				return -1
+			}
 			return 1
 		case aerr == nil:
 			return -1
 		case berr == nil:
 			return 1
 		default:
-			if a.pre[i] < b.pre[i] { return -1 }
+			if a.pre[i] < b.pre[i] {
+				return -1
+			}
 			return 1
 		}
 	}
