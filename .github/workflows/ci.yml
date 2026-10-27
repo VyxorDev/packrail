@@ -281,8 +281,9 @@ jobs:
           PACKRAIL_HOME="$RUNNER_TEMP/packrail-runtime-add" ./prl add starterqueue
           grep -q '"lockfile_version": 2' packrail.lock
           grep -q '"runtimes"' packrail.lock
-          grep -q '"node|>=20|node"' packrail.lock
-          add_version="$(python3 -c 'import json; print(json.load(open("packrail.lock"))["runtimes"]["node|>=20|node"]["artifacts"][{"Linux":"linux","macOS":"darwin"}.get("${{ runner.os }}","linux")+"-amd64"]["version"])')"
+          platform="$(go env GOOS)-$(go env GOARCH)"
+          export PLATFORM="$platform"
+          add_version="$(python3 -c 'import json,os; d=json.load(open("packrail.lock")); p=d["runtimes"]["node|>=20|node"]["artifacts"][os.environ["PLATFORM"]]; assert p["url"].startswith("https://"); assert len(p["sha256"]) in (64,128); print(p["version"])')"
           PACKRAIL_HOME="$RUNNER_TEMP/packrail-runtime-sync" ./prl sync
           sync_version="$(python3 -c 'import json; print(json.load(open("'"$RUNNER_TEMP"'/packrail-runtime-sync/packages/starterqueue/0.5.0/.packrail.json"))["runtime_version"])')"
           test "$add_version" = "$sync_version"
@@ -298,8 +299,11 @@ jobs:
           $lock = Get-Content .\packrail.lock -Raw | ConvertFrom-Json
           if ($lock.lockfile_version -ne 2) { throw 'expected lockfile v2' }
           $key = 'node|>=20|node'
-          $pin = $lock.runtimes.$key.artifacts.'windows-amd64'
-          if (-not $pin.version) { throw 'missing Windows Node runtime pin' }
+          $platform = "windows-$env:PROCESSOR_ARCHITECTURE"
+          if ($env:PROCESSOR_ARCHITECTURE -eq 'AMD64') { $platform = 'windows-amd64' }
+          elseif ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { $platform = 'windows-arm64' }
+          $pin = $lock.runtimes.$key.artifacts.$platform
+          if (-not $pin.version -or -not $pin.url -or -not $pin.sha256) { throw 'incomplete Windows Node runtime pin' }
           $env:PACKRAIL_HOME = Join-Path $env:RUNNER_TEMP 'packrail-runtime-sync'
           .\prl.exe sync
           $record = Get-Content "$env:PACKRAIL_HOME\packages\starterqueue\0.5.0\.packrail.json" -Raw | ConvertFrom-Json
