@@ -24,8 +24,8 @@ const (
 // and keeps its historical constraint-based runtime behavior until it is
 // rewritten by `prl add`.
 type File struct {
-	LockfileVersion int                                  `json:"lockfile_version"`
-	Packages        []registry.Package                   `json:"packages"`
+	LockfileVersion int                                   `json:"lockfile_version"`
+	Packages        []registry.Package                    `json:"packages"`
 	Runtimes        map[string]packruntimes.LockedRuntime `json:"runtimes,omitempty"`
 }
 
@@ -248,8 +248,6 @@ func normalizeAndValidate(file *File) error {
 	})
 
 	if file.LockfileVersion == 1 {
-		// v1 did not contain exact runtime pins. Clear any accidental v2 fields so
-		// its historical dynamic-runtime behavior is unambiguous.
 		file.Runtimes = nil
 		return nil
 	}
@@ -353,11 +351,14 @@ func runtimePlatformsForPackage(pkg registry.Package) []string {
 }
 
 func sameRuntimeSpec(spec registry.Runtime, locked packruntimes.LockedRuntime) bool {
-	return strings.EqualFold(strings.TrimSpace(spec.Name), strings.TrimSpace(locked.Name)) ||
-		(strings.EqualFold(strings.TrimSpace(spec.Name), "nodejs") && strings.EqualFold(strings.TrimSpace(locked.Name), "node")) ||
-		(strings.EqualFold(strings.TrimSpace(spec.Name), "python3") && strings.EqualFold(strings.TrimSpace(locked.Name), "python")) ||
-		(strings.EqualFold(strings.TrimSpace(spec.Name), "jre") && strings.EqualFold(strings.TrimSpace(locked.Name), "java")) ||
-		(strings.EqualFold(strings.TrimSpace(spec.Name), ".net") && strings.EqualFold(strings.TrimSpace(locked.Name), "dotnet")) &&
+	name := strings.ToLower(strings.TrimSpace(spec.Name))
+	lockedName := strings.ToLower(strings.TrimSpace(locked.Name))
+	nameMatches := name == lockedName ||
+		(name == "nodejs" && lockedName == "node") ||
+		(name == "python3" && lockedName == "python") ||
+		(name == "jre" && lockedName == "java") ||
+		(name == ".net" && lockedName == "dotnet")
+	return nameMatches &&
 		strings.TrimSpace(spec.Constraint) == strings.TrimSpace(locked.Constraint) &&
 		strings.TrimSpace(spec.Command) == strings.TrimSpace(locked.Command)
 }
