@@ -77,8 +77,8 @@ func TestEntrypointForRejectsUnsafePaths(t *testing.T) {
 func TestDecodeRejectsUnsafeEntrypoint(t *testing.T) {
 	manifest := strings.Replace(
 		testRegistryJSON("unsafe-tool", "1.0.0"),
-		`"entrypoint": "package/tool"",
-		`"entrypoint": "../escape"",
+		"\"entrypoint\": \"package/tool\"",
+		"\"entrypoint\": \"../escape\"",
 		1,
 	)
 	if _, err := decodeAndValidate([]byte(manifest)); err == nil {
