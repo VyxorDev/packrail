@@ -32,8 +32,11 @@ func TestConstraintSatisfied(t *testing.T) {
 	}
 }
 
-func TestConstraintRejectsUnsupportedGrammar(t *testing.T) {
-	for _, constraint := range []string{">15", "<16", "~15", "=15", "banana"} {
+func TestConstraintRejectsUnsupportedOrMalformedGrammar(t *testing.T) {
+	for _, constraint := range []string{
+		">15", "<16", "~15", "=15", "banana",
+		"1.0.0-alpha..1", "1.0.0+", "1.0.0+meta..x",
+	} {
 		if _, err := ConstraintSatisfied("15.2.0", constraint); err == nil {
 			t.Fatalf("expected %q to be rejected", constraint)
 		}
