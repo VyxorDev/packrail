@@ -71,7 +71,7 @@ func Install(pkg registry.Package) error {
 		}
 	}
 
-	runtimeResult, err := packruntimes.Ensure(home, pkg.Runtime)
+	runtimeResult, err := packruntimes.EnsureLocked(home, pkg.Runtime)
 	if err != nil {
 		return fmt.Errorf("prepare %s runtime: %w", pkg.Runtime.Name, err)
 	}
