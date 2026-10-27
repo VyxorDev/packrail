@@ -21,10 +21,7 @@ const (
 	maxFileBytes   = 1 << 20
 )
 
-var (
-	packageName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
-	repoName    = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
-)
+var packageName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 
 type Dependency struct {
 	Constraint string `json:"constraint"`
@@ -159,8 +156,10 @@ func Validate(file *File) error {
 			return fmt.Errorf("dependency %s: %w", name, err)
 		}
 		dep.Repo = normalizeRepo(dep.Repo)
-		if dep.Repo != "" && !repoName.MatchString(dep.Repo) {
-			return fmt.Errorf("dependency %s has invalid GitHub repo %q (expected owner/repo)", name, dep.Repo)
+		if dep.Repo != "" {
+			if err := validateRepo(dep.Repo); err != nil {
+				return fmt.Errorf("dependency %s has invalid GitHub repo %q: %w", name, dep.Repo, err)
+			}
 		}
 		normalized[name] = dep
 	}
@@ -278,10 +277,33 @@ func writeAtomic(path string, data []byte) error {
 }
 
 func normalizeRepo(value string) string {
-	value = strings.TrimSpace(strings.TrimSuffix(value, ".git"))
-	value = strings.Trim(value, "/")
+	value = strings.TrimSpace(value)
+	value = strings.TrimRight(value, "/")
+	value = strings.TrimSuffix(value, ".git")
 	if strings.HasPrefix(strings.ToLower(value), "https://github.com/") {
 		value = value[len("https://github.com/"):]
 	}
-	return value
+	return strings.Trim(value, "/")
+}
+
+func validateRepo(value string) error {
+	parts := strings.Split(value, "/")
+	if len(parts) != 2 {
+		return fmt.Errorf("expected owner/repo")
+	}
+	for _, part := range parts {
+		if part == "" || part == "." || part == ".." {
+			return fmt.Errorf("owner and repository must be non-empty names")
+		}
+		if len(part) > 100 {
+			return fmt.Errorf("owner or repository name is too long")
+		}
+		for _, r := range part {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+				continue
+			}
+			return fmt.Errorf("owner or repository contains invalid character %q", r)
+		}
+	}
+	return nil
 }
