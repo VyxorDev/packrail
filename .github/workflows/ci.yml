@@ -212,3 +212,32 @@ jobs:
           & .\scripts\install.ps1
           $output = (& (Join-Path $env:PACKRAIL_INSTALL_DIR 'prl.exe') version) -join "`n"
           if ($output -notmatch 'prl 0.8.0-alpha') { throw "unexpected Packrail version: $output" }
+
+  lockfile-smoke:
+    name: lockfile-sync-smoke
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: true
+
+      - name: Build prl
+        run: go build -o prl ./cmd/prl
+
+      - name: Add a package, sync into a clean Packrail home, and prove idempotence
+        shell: bash
+        run: |
+          set -euo pipefail
+          PACKRAIL_HOME="$RUNNER_TEMP/packrail-add" ./prl add ripgrep
+          test -f packrail.lock
+          grep -q '"lockfile_version": 1' packrail.lock
+          PACKRAIL_HOME="$RUNNER_TEMP/packrail-sync" ./prl sync | tee sync-first.txt
+          grep -q 'Installed ripgrep 15.2.0' sync-first.txt
+          PACKRAIL_HOME="$RUNNER_TEMP/packrail-sync" ./prl sync | tee sync-second.txt
+          grep -q 'Already in sync: ripgrep 15.2.0' sync-second.txt
