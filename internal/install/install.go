@@ -27,6 +27,7 @@ type InstallRecord struct {
 	Source         string `json:"source"`
 	Platform       string `json:"platform"`
 	ArtifactSHA256 string `json:"artifact_sha256"`
+	MetadataSHA256  string `json:"metadata_sha256,omitempty"`
 	Runtime        string `json:"runtime,omitempty"`
 	RuntimeVersion string `json:"runtime_version,omitempty"`
 	ManagedRuntime bool   `json:"managed_runtime,omitempty"`
@@ -314,6 +315,10 @@ func safeArchiveTarget(root, name string) (string, error) {
 }
 
 func writeRecord(finalDir string, pkg registry.Package, artifact registry.Artifact, runtimeResult packruntimes.Result) error {
+	metadataSHA256, err := packageMetadataSHA256(pkg)
+	if err != nil {
+		return fmt.Errorf("fingerprint package metadata: %w", err)
+	}
 	record := InstallRecord{
 		Name:           pkg.Name,
 		Version:        pkg.Version,
@@ -321,6 +326,7 @@ func writeRecord(finalDir string, pkg registry.Package, artifact registry.Artifa
 		Source:         pkg.Source,
 		Platform:       registry.PlatformKey(runtime.GOOS, runtime.GOARCH),
 		ArtifactSHA256: artifact.SHA256,
+		MetadataSHA256: metadataSHA256,
 		Runtime:        pkg.Runtime.Name,
 		RuntimeVersion: runtimeResult.Version,
 		ManagedRuntime: runtimeResult.Managed,
@@ -334,6 +340,15 @@ func writeRecord(finalDir string, pkg registry.Package, artifact registry.Artifa
 		return fmt.Errorf("write install record: %w", err)
 	}
 	return nil
+}
+
+func packageMetadataSHA256(pkg registry.Package) (string, error) {
+	data, err := json.Marshal(pkg)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 func writeShim(binDir, finalDir string, pkg registry.Package, entrypoint, runtimeExecutable string) error {

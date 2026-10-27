@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
 	"github.com/VyxorDev/packrail/internal/registry"
+	packruntimes "github.com/VyxorDev/packrail/internal/runtimes"
 )
 
 // InstalledRecords returns every valid Packrail install record found beneath
@@ -75,6 +77,69 @@ func RecordsFor(name string) ([]InstallRecord, error) {
 		}
 	}
 	return matches, nil
+}
+
+// IsCurrent reports whether the installed package matches the exact locked
+// package metadata and platform artifact, and whether its command shim/runtime
+// still exist. Older records without a metadata fingerprint are reinstalled once.
+func IsCurrent(pkg registry.Package) (bool, error) {
+	artifact, err := registry.ArtifactFor(pkg, runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return false, err
+	}
+	fingerprint, err := packageMetadataSHA256(pkg)
+	if err != nil {
+		return false, fmt.Errorf("fingerprint package metadata: %w", err)
+	}
+	records, err := RecordsFor(pkg.Name)
+	if err != nil {
+		return false, err
+	}
+	home, err := Home()
+	if err != nil {
+		return false, err
+	}
+	shimName := pkg.Command.Name
+	if runtime.GOOS == "windows" {
+		shimName += ".cmd"
+	}
+	shimInfo, err := os.Stat(filepath.Join(home, "bin", shimName))
+	if err != nil || shimInfo.IsDir() {
+		return false, nil
+	}
+
+	platform := registry.PlatformKey(runtime.GOOS, runtime.GOARCH)
+	for _, record := range records {
+		if !strings.EqualFold(record.Name, pkg.Name) ||
+			record.Version != pkg.Version ||
+			record.Platform != platform ||
+			!strings.EqualFold(record.ArtifactSHA256, artifact.SHA256) ||
+			record.MetadataSHA256 != fingerprint ||
+			!strings.EqualFold(record.Command, pkg.Command.Name) {
+			continue
+		}
+		if record.ManagedRuntime {
+			if strings.TrimSpace(record.RuntimeVersion) == "" {
+				continue
+			}
+			versions, err := packruntimes.InstalledVersions(home, record.Runtime)
+			if err != nil {
+				return false, err
+			}
+			found := false
+			for _, version := range versions {
+				if version == record.RuntimeVersion {
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue
+			}
+		}
+		return true, nil
+	}
+	return false, nil
 }
 
 // Remove deletes only files tracked beneath a Packrail package directory and

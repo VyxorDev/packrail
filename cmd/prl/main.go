@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/VyxorDev/packrail/internal/install"
+	"github.com/VyxorDev/packrail/internal/lockfile"
 	"github.com/VyxorDev/packrail/internal/publisher"
 	"github.com/VyxorDev/packrail/internal/registry"
 	packruntimes "github.com/VyxorDev/packrail/internal/runtimes"
@@ -19,7 +20,7 @@ import (
 	"github.com/VyxorDev/packrail/internal/submit"
 )
 
-const version = "0.8.0-alpha"
+const version = "0.9.0-alpha"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -87,6 +88,12 @@ func run(args []string) error {
 		fmt.Printf("Command: %s\n", pkg.Command.Name)
 		fmt.Printf("Bin directory: %s\n", filepath.Join(home, "bin"))
 		return nil
+
+	case "add":
+		return addCommand(args[1:])
+
+	case "sync":
+		return syncCommand(args[1:])
 
 	case "update", "upgrade":
 		return updateCommand(args[1:])
@@ -197,6 +204,159 @@ func run(args []string) error {
 	default:
 		return fmt.Errorf("unknown command %q; run 'prl help'", args[0])
 	}
+}
+
+func addCommand(args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: prl add <package|github:owner/repo>")
+	}
+	target := strings.TrimSpace(args[0])
+	if target == "" {
+		return fmt.Errorf("usage: prl add <package|github:owner/repo>")
+	}
+
+	pkg, err := resolveForLockfile(target)
+	if err != nil {
+		return err
+	}
+	if _, err := registry.ArtifactFor(pkg, runtime.GOOS, runtime.GOARCH); err != nil {
+		return err
+	}
+
+	path, err := lockfile.Path()
+	if err != nil {
+		return err
+	}
+	file, _, err := lockfile.LoadOrEmpty(path)
+	if err != nil {
+		return err
+	}
+	if err := lockfile.Upsert(&file, pkg); err != nil {
+		return fmt.Errorf("update lockfile: %w", err)
+	}
+
+	fmt.Printf("Adding %s %s to the project lockfile...\n", pkg.Name, pkg.Version)
+	changed, err := ensureInstalled(pkg)
+	if err != nil {
+		return fmt.Errorf("install %s %s: %w", pkg.Name, pkg.Version, err)
+	}
+	if err := lockfile.Save(path, file); err != nil {
+		return fmt.Errorf("installed %s %s, but could not save lockfile %s: %w", pkg.Name, pkg.Version, path, err)
+	}
+	if changed {
+		fmt.Printf("Added %s %s to %s\n", pkg.Name, pkg.Version, path)
+	} else {
+		fmt.Printf("%s %s is already installed; lockfile updated at %s\n", pkg.Name, pkg.Version, path)
+	}
+	return nil
+}
+
+func syncCommand(args []string) error {
+	if len(args) != 0 {
+		return fmt.Errorf("usage: prl sync")
+	}
+	path, err := lockfile.Path()
+	if err != nil {
+		return err
+	}
+	file, err := lockfile.Load(path)
+	if err != nil {
+		return err
+	}
+	if len(file.Packages) == 0 {
+		return fmt.Errorf("%s contains no packages; add one with 'prl add <package>'", path)
+	}
+
+	// Preflight every package before downloading or replacing anything. This
+	// avoids a predictable unsupported-platform error halfway through a sync.
+	for _, pkg := range file.Packages {
+		if _, err := registry.ArtifactFor(pkg, runtime.GOOS, runtime.GOARCH); err != nil {
+			return fmt.Errorf("lockfile package %s: %w", pkg.Name, err)
+		}
+	}
+
+	fmt.Printf("Syncing %d packages from %s...\n", len(file.Packages), path)
+	installed, current := 0, 0
+	for _, pkg := range file.Packages {
+		changed, err := ensureInstalled(pkg)
+		if err != nil {
+			return fmt.Errorf("sync %s %s: %w", pkg.Name, pkg.Version, err)
+		}
+		if changed {
+			fmt.Printf("Installed %s %s\n", pkg.Name, pkg.Version)
+			installed++
+		} else {
+			fmt.Printf("Already in sync: %s %s\n", pkg.Name, pkg.Version)
+			current++
+		}
+	}
+	fmt.Printf("Sync complete: %d installed/updated, %d already in sync.\n", installed, current)
+	return nil
+}
+
+// resolveForLockfile stores a portable package definition, including every
+// supported release artifact. One-off GitHub installs intentionally keep their
+// faster, current-platform-only resolution path.
+func resolveForLockfile(target string) (registry.Package, error) {
+	if strings.HasPrefix(strings.ToLower(target), "github:") {
+		repo := strings.TrimSpace(target[len("github:"):])
+		if repo == "" {
+			return registry.Package{}, fmt.Errorf("usage: prl add github:owner/repo")
+		}
+		fmt.Printf("Inspecting GitHub release for a portable lock entry: %s\n", repo)
+		draft, err := publisher.New().Generate(repo, "")
+		if err != nil {
+			return registry.Package{}, err
+		}
+		for _, warning := range draft.Warnings {
+			fmt.Fprintf(os.Stderr, "warning: %s\n", warning)
+		}
+		if !draft.Complete {
+			return registry.Package{}, fmt.Errorf("release metadata could not be resolved safely across supported platforms; use 'prl install github:%s' for a platform-specific one-off install", repo)
+		}
+		if err := registry.ValidatePackage(draft.Package); err != nil {
+			return registry.Package{}, fmt.Errorf("validate package metadata: %w", err)
+		}
+		if err := registry.ValidateGitHubProvenance(draft.Package); err != nil {
+			return registry.Package{}, err
+		}
+		return draft.Package, nil
+	}
+
+	refreshRegistry()
+	return registry.Find(target)
+}
+
+// ensureInstalled installs the exact package definition supplied by the
+// lockfile. It never re-resolves a locked package against the live registry.
+func ensureInstalled(pkg registry.Package) (bool, error) {
+	current, err := install.IsCurrent(pkg)
+	if err != nil {
+		return false, err
+	}
+	records, err := install.RecordsFor(pkg.Name)
+	if err != nil {
+		return false, err
+	}
+	if current && len(records) == 1 {
+		return false, nil
+	}
+
+	hasOtherVersion := len(records) > 1
+	for _, record := range records {
+		if record.Version != pkg.Version {
+			hasOtherVersion = true
+			break
+		}
+	}
+	if len(records) > 0 && hasOtherVersion {
+		_, _, err := install.Update(pkg)
+		return true, err
+	}
+	if err := install.Install(pkg); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func updateCommand(args []string) error {
@@ -581,6 +741,8 @@ Universal package distribution for open-source software.
 Usage:
   prl install <package>                         Install a registry package and required runtime
   prl install github:owner/repo                 Install directly from a GitHub Release
+  prl add <package|github:owner/repo>            Install and record a project tool
+  prl sync                                       Install packages pinned in packrail.lock
   prl update [package]                          Update one package or all installed packages
   prl remove <package>                          Remove a package and its tracked shims/files
   prl search [query]                            Search the GitHub-backed registry

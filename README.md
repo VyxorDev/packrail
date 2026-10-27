@@ -16,7 +16,7 @@ prl self update
 
 ## Status
 
-Packrail is currently **v0.8-alpha**.
+Packrail is in **v0.9.0-alpha development**. The latest published installer release remains **v0.8.0-alpha** until v0.9 release assets are published.
 
 The user-side flow is:
 
@@ -48,6 +48,19 @@ The Unix installer selects Linux/macOS and x64/ARM64 automatically, verifies the
 
 Set `PACKRAIL_INSTALL_DIR` before running either script to choose another destination.
 
+## Project lockfiles (v0.9 alpha)
+
+Use `prl add` from a project directory to install a tool and record its complete resolved package metadata in `packrail.lock`:
+
+    prl add ripgrep
+    prl add github:owner/repo
+    prl sync
+
+`prl install` remains a one-off install and does not edit the current directory. `prl add` creates or updates the project lockfile after a successful install. Commit `packrail.lock` to your project so another machine can run `prl sync` from the same directory.
+
+Lockfile version 1 stores the package version, source, command/entrypoint metadata, platform artifact URLs, formats, and SHA-256 checksums. `prl sync` uses those saved definitions rather than resolving package versions from the live registry, verifies downloads through the normal installer, and skips matching installs. It does not remove unrelated tools installed globally.
+
+Managed runtime releases are still selected from each package's declared runtime constraint; lockfile version 1 does not yet pin an exact Node/Python/Java/.NET runtime release. Direct `prl add github:owner/repo` requires enough safe metadata to describe the supported platforms; use `prl install github:owner/repo` for a current-platform-only one-off install when the release cannot be locked portably.
 ## Registry installs
 
 ```powershell
