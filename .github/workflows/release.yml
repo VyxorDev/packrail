@@ -94,13 +94,19 @@ jobs:
         run: |
           set -euo pipefail
           tag="v$RELEASE_VERSION"
-          cat > RELEASE_NOTES.md <<EOF
-          Packrail $tag
-
-          Cross-platform prl binaries for Windows, Linux, and macOS on x64 and ARM64.
-          The release also includes version-pinned install.ps1 and install.sh bootstrap scripts.
-          Verify downloaded binaries with SHA256SUMS.txt.
-          EOF
+          {
+            echo "# Packrail $tag"
+            echo
+            awk -v version="$RELEASE_VERSION" '
+              index($0, "## " version) == 1 { printing = 1; next }
+              printing && /^## / { exit }
+              printing { print }
+            ' CHANGELOG.md
+            echo
+            echo "Cross-platform prl binaries for Windows, Linux, and macOS on x64 and ARM64."
+            echo "The release includes version-pinned install.ps1 and install.sh bootstrap scripts."
+            echo "Verify downloaded binaries with SHA256SUMS.txt."
+          } > RELEASE_NOTES.md
 
           if gh release view "$tag" >/dev/null 2>&1; then
             echo "Release $tag already exists; refusing to overwrite an existing published version."

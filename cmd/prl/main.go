@@ -20,7 +20,7 @@ import (
 	"github.com/VyxorDev/packrail/internal/submit"
 )
 
-const version = "0.9.0-alpha"
+const version = "1.0.0"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {

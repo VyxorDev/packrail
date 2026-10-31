@@ -2,7 +2,7 @@
 
 **Universal package distribution for open-source software.**
 
-Packrail is an experimental, Git-native distribution layer for open-source command-line software. The CLI is `prl`.
+Packrail is a Git-native distribution layer for open-source command-line software. The CLI is `prl`.
 
 ```powershell
 prl install ripgrep
@@ -18,7 +18,7 @@ prl self update
 
 ## Status
 
-The Packrail CLI currently reports **v0.9.0-alpha**. The project manifest/lockfile architecture is implemented on `main`; the latest published installer release remains **v0.8.0-alpha**. The current work is release hardening, not another feature expansion.
+The Packrail CLI on `main` reports **v1.0.0**. The first stable release is prepared; the published installer assets will move from **v0.8.0-alpha** to **v1.0.0** when the Release workflow completes.
 
 The user-side flow is:
 
@@ -35,7 +35,7 @@ Installer scripts are attached to each Packrail release and pinned to that relea
 ### Windows
 
 ```powershell
-irm https://github.com/VyxorDev/packrail/releases/download/v0.8.0-alpha/install.ps1 | iex
+irm https://github.com/VyxorDev/packrail/releases/latest/download/install.ps1 | iex
 ```
 
 The installer supports built-in Windows PowerShell 5.1 and modern PowerShell. It selects the correct x64/ARM64 release binary, downloads `SHA256SUMS.txt`, verifies the binary, installs `prl.exe` under `%LOCALAPPDATA%\Packrail\bin` by default, and adds that directory to the user PATH.
@@ -43,7 +43,7 @@ The installer supports built-in Windows PowerShell 5.1 and modern PowerShell. It
 ### Linux / macOS
 
 ```bash
-curl -fsSL https://github.com/VyxorDev/packrail/releases/download/v0.8.0-alpha/install.sh | sh
+curl -fsSL https://github.com/VyxorDev/packrail/releases/latest/download/install.sh | sh
 ```
 
 The Unix installer selects Linux/macOS and x64/ARM64 automatically, verifies the release checksum, installs to `~/.local/bin/prl` by default, and adds that directory to PATH through `~/.profile` when necessary.
@@ -354,4 +354,8 @@ go build ./cmd/prl
 
 CI runs tests, vet/build, publisher/registry smoke tests, managed runtime installation, global lifecycle checks, native package installation, project manifest lifecycle tests, and managed-runtime lockfile sync across Windows, Linux, and macOS.
 
-Packrail is still alpha software. Manifest/release inference is intentionally conservative, dependency constraints intentionally cover only a small useful subset rather than a complete semver solver, the registry does not yet retain historical versions, runtime/package garbage collection is not implemented yet, and direct GitHub installation refuses ambiguous releases instead of guessing.
+Packrail v1.0 keeps its supported scope explicit:
+- The registry stores one current version per package; historical releases can be pinned through direct GitHub project dependencies.
+- Dependency constraints support a small useful grammar, not a complete semver solver.
+- Automatic garbage collection of old package/runtime versions is not implemented; Packrail prefers retaining verified files over deleting shared state.
+- Direct GitHub release inference is conservative and refuses ambiguous artifacts instead of guessing.
