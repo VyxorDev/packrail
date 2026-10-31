@@ -18,9 +18,9 @@ const (
 )
 
 var (
-	lockKernel32       = syscall.NewLazyDLL("kernel32.dll")
-	lockFileExProc     = lockKernel32.NewProc("LockFileEx")
-	unlockFileExProc   = lockKernel32.NewProc("UnlockFileEx")
+	lockKernel32     = syscall.NewLazyDLL("kernel32.dll")
+	lockFileExProc   = lockKernel32.NewProc("LockFileEx")
+	unlockFileExProc = lockKernel32.NewProc("UnlockFileEx")
 )
 
 func acquireProjectLock(path string) (func() error, error) {
