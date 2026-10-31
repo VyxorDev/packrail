@@ -107,11 +107,16 @@ jobs:
             exit 1
           fi
 
+          release_flags=()
+          if [[ "$RELEASE_VERSION" == *-* ]]; then
+            release_flags+=(--prerelease)
+          fi
+
           gh release create "$tag" \
             --target "$GITHUB_SHA" \
             --title "Packrail $tag" \
             --notes-file RELEASE_NOTES.md \
-            --prerelease \
+            "${release_flags[@]}" \
             dist/*
 
   installer-smoke-unix:

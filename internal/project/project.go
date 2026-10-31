@@ -55,6 +55,13 @@ type SyncResult struct {
 	LockOnly  bool
 }
 
+type SyncPlan struct {
+	Packages     int
+	LockOnly     bool
+	NeedsInstall []registry.Package
+	Current      []registry.Package
+}
+
 type UpdateResult struct {
 	Packages  []registry.Package
 	Installed int
@@ -261,6 +268,47 @@ func (m *Manager) Sync() (SyncResult, error) {
 		if changed { result.Installed++ } else { result.Current++ }
 	}
 	return result, nil
+}
+
+// PlanSync inspects the current project and installed state without recovering
+// journals, downloading artifacts, installing packages, or changing project files.
+func (m *Manager) PlanSync() (SyncPlan, error) {
+	if _, err := os.Stat(m.transactionPath()); err == nil {
+		return SyncPlan{}, fmt.Errorf("a project transaction is pending recovery; run 'prl sync' without --dry-run first")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return SyncPlan{}, fmt.Errorf("stat project transaction: %w", err)
+	}
+
+	lf, err := lockfile.Load(m.LockPath())
+	if err != nil {
+		return SyncPlan{}, err
+	}
+	mf, mfExists, err := loadManifestOptional(m.ManifestPath())
+	if err != nil {
+		return SyncPlan{}, err
+	}
+	if mfExists {
+		if err := CheckAgreement(mf, lf); err != nil {
+			return SyncPlan{}, fmt.Errorf("project state is out of date: %w; run 'prl update' to resolve %s into %s", err, manifest.FileName, lockfile.FileName)
+		}
+	}
+
+	plan := SyncPlan{Packages: len(lf.Packages), LockOnly: !mfExists}
+	for _, pkg := range lf.Packages {
+		if _, err := registry.ArtifactFor(pkg, runtime.GOOS, runtime.GOARCH); err != nil {
+			return SyncPlan{}, fmt.Errorf("lockfile package %s: %w", pkg.Name, err)
+		}
+		current, err := install.IsCurrent(pkg)
+		if err != nil {
+			return SyncPlan{}, fmt.Errorf("inspect %s %s: %w", pkg.Name, pkg.Version, err)
+		}
+		if current {
+			plan.Current = append(plan.Current, pkg)
+		} else {
+			plan.NeedsInstall = append(plan.NeedsInstall, pkg)
+		}
+	}
+	return plan, nil
 }
 
 func (m *Manager) Update(names []string) (UpdateResult, error) {

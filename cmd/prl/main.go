@@ -38,23 +38,23 @@ func run(args []string) error {
 	switch args[0] {
 	case "install", "i":
 		if len(args) != 2 {
-			return fmt.Errorf("usage: prl install <package|github:owner/repo>")
+			return fmt.Errorf("usage: prl install <package|owner/repo>")
 		}
 		target := strings.TrimSpace(args[1])
 		var pkg registry.Package
 		var err error
-		if strings.HasPrefix(strings.ToLower(target), "github:") {
-			repo := strings.TrimSpace(target[len("github:"):])
-			if repo == "" {
-				return fmt.Errorf("usage: prl install github:owner/repo")
-			}
-			fmt.Printf("Inspecting GitHub release: %s\n", repo)
+		repo, directGitHub, parseErr := parseGitHubInstallTarget(target)
+		if parseErr != nil {
+			return parseErr
+		}
+		if directGitHub {
+			fmt.Printf("Inspecting GitHub release: %s\\n", repo)
 			draft, draftErr := publisher.New().GenerateForPlatform(repo, "", runtime.GOOS, runtime.GOARCH)
 			if draftErr != nil {
 				return draftErr
 			}
 			for _, warning := range draft.Warnings {
-				fmt.Fprintf(os.Stderr, "warning: %s\n", warning)
+				fmt.Fprintf(os.Stderr, "warning: %s\\n", warning)
 			}
 			if !draft.Complete {
 				return fmt.Errorf("GitHub release could not be inferred safely; use 'prl package generate %s' to inspect the draft", repo)
@@ -197,6 +197,31 @@ func run(args []string) error {
 	default:
 		return fmt.Errorf("unknown command %q; run 'prl help'", args[0])
 	}
+}
+
+func parseGitHubInstallTarget(target string) (string, bool, error) {
+	value := strings.TrimSpace(target)
+	explicit := strings.HasPrefix(strings.ToLower(value), "github:")
+	if explicit {
+		value = strings.TrimSpace(value[len("github:"):])
+	} else if strings.Count(value, "/") != 1 {
+		return "", false, nil
+	}
+
+	if value == "" {
+		return "", true, fmt.Errorf("usage: prl install <package|owner/repo>")
+	}
+	if strings.Contains(value, "@") {
+		return "", true, fmt.Errorf("global GitHub installs use the latest release; use 'prl add github:owner/repo@version' inside a project for an exact pin")
+	}
+	if strings.ContainsAny(value, " \\t\\r\\n?#") {
+		return "", true, fmt.Errorf("invalid GitHub repository target %q; expected owner/repo", target)
+	}
+	parts := strings.Split(value, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", true, fmt.Errorf("invalid GitHub repository target %q; expected owner/repo", target)
+	}
+	return value, true, nil
 }
 
 func lockCommand(args []string) error {
@@ -794,7 +819,8 @@ Universal package distribution for open-source software.
 
 Usage:
   prl install <package>                         One-off global install from the registry
-  prl install github:owner/repo                 One-off global install from a GitHub Release
+  prl install owner/repo                        One-off global install from the latest GitHub Release
+  prl install github:owner/repo                 Explicit GitHub syntax (same as owner/repo)
   prl init                                      Create packrail.json (or migrate a v0.9 lock-only project)
   prl add <package[@constraint]>                Add project intent, resolve, install, and lock it
   prl add github:owner/repo[@constraint]        Add a direct-GitHub project dependency

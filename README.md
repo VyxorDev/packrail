@@ -6,6 +6,7 @@ Packrail is an experimental, Git-native distribution layer for open-source comma
 
 ```powershell
 prl install ripgrep
+prl install BurntSushi/ripgrep
 prl install github:BurntSushi/ripgrep
 prl init
 prl add ripgrep@15.2.0
@@ -17,7 +18,7 @@ prl self update
 
 ## Status
 
-The Packrail CLI still reports **v0.9.0-alpha** while the next project-manifest architecture is being developed on `main`. The latest published installer release remains **v0.8.0-alpha** until newer release assets are deliberately published.
+The Packrail CLI currently reports **v0.9.0-alpha**. The project manifest/lockfile architecture is implemented on `main`; the latest published installer release remains **v0.8.0-alpha**. The current work is release hardening, not another feature expansion.
 
 The user-side flow is:
 
@@ -49,7 +50,7 @@ The Unix installer selects Linux/macOS and x64/ARM64 automatically, verifies the
 
 Set `PACKRAIL_INSTALL_DIR` before running either script to choose another destination.
 
-## Project manifests and lockfiles (v0.10 development)
+## Project manifests and lockfiles
 
 Packrail now separates **what a project asks for** from **what Packrail resolved**:
 
@@ -98,6 +99,14 @@ The loader also accepts a concise string form such as `"ripgrep": "^15"`; Packra
 prl sync
 ```
 
+Preview the same operation without downloading or changing anything:
+
+```powershell
+prl sync --dry-run
+```
+
+The dry run validates manifest/lock agreement and inspects whether each exact locked package is already installed. It reports what would be installed or updated, but does not recover transaction journals, download artifacts, install packages, or modify project files. If an interrupted transaction needs recovery, run normal `prl sync` first.
+
 Re-resolution is explicit:
 
 ```powershell
@@ -134,7 +143,7 @@ The project manifest currently understands a deliberately small dependency gramm
 
 This syntax does **not** pretend Packrail already has npm-style historical registry storage. The current Packrail registry publishes one resolved version per package. A registry request succeeds only if that published version satisfies the requested constraint; Packrail returns an explicit error instead of silently substituting another version when it does not.
 
-Direct GitHub dependencies have a stronger exact-version path. An exact request such as:
+Direct GitHub project dependencies have a stronger exact-version path. For global one-off installs, `prl install owner/repo` selects the latest compatible GitHub Release; the explicit `github:owner/repo` form remains supported. An exact project request such as:
 
 ```powershell
 prl add github:owner/repo@1.2.3
@@ -181,8 +190,11 @@ The authoritative flattened registry is `registry/index.json`. If GitHub is unav
 A suitable public GitHub Release can be installed without first adding the project to Packrail's registry:
 
 ```powershell
+prl install BurntSushi/ripgrep
+prl install VyxorDev/starterqueue
+
+# Explicit equivalent syntax remains supported:
 prl install github:BurntSushi/ripgrep
-prl install github:VyxorDev/starterqueue
 ```
 
 For one-off direct installs Packrail inspects the current machine's release artifact. It can infer conventional platform names, prefer normal GNU Linux artifacts over musl variants, detect a unique native executable even when the repository name differs from the command (`ripgrep` -> `rg`), and reuse runtime inference for supported script/runtime layouts.

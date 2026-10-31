@@ -49,11 +49,35 @@ func projectAddCommand(args []string) error {
 }
 
 func projectSyncCommand(args []string) error {
-	if len(args) != 0 {
-		return fmt.Errorf("usage: prl sync")
+	dryRun := false
+	if len(args) == 1 && args[0] == "--dry-run" {
+		dryRun = true
+	} else if len(args) != 0 {
+		return fmt.Errorf("usage: prl sync [--dry-run]")
 	}
+
 	manager, err := project.New("")
 	if err != nil { return err }
+	if dryRun {
+		plan, err := manager.PlanSync()
+		if err != nil { return err }
+		if plan.Packages == 0 {
+			fmt.Println("Nothing to sync.")
+			return nil
+		}
+		if plan.LockOnly {
+			fmt.Println("Planning legacy lockfile-only project (v0.9 compatibility mode).")
+		}
+		for _, pkg := range plan.NeedsInstall {
+			fmt.Printf("Would install/update %s %s.\\n", pkg.Name, pkg.Version)
+		}
+		for _, pkg := range plan.Current {
+			fmt.Printf("Already in sync: %s %s.\\n", pkg.Name, pkg.Version)
+		}
+		fmt.Printf("Dry run complete: %d would install/update, %d already in sync. No files changed.\\n", len(plan.NeedsInstall), len(plan.Current))
+		return nil
+	}
+
 	result, err := manager.Sync()
 	if err != nil { return err }
 	if result.Packages == 0 {
@@ -63,7 +87,7 @@ func projectSyncCommand(args []string) error {
 	if result.LockOnly {
 		fmt.Println("Syncing legacy lockfile-only project (v0.9 compatibility mode).")
 	}
-	fmt.Printf("Sync complete: %d installed/updated, %d already in sync.\n", result.Installed, result.Current)
+	fmt.Printf("Sync complete: %d installed/updated, %d already in sync.\\n", result.Installed, result.Current)
 	return nil
 }
 

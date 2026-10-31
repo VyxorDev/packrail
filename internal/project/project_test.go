@@ -242,6 +242,53 @@ func TestCheckAgreementRejectsDirectRepoMismatch(t *testing.T) {
 	}
 }
 
+
+func TestPlanSyncDoesNotInstallOrModifyProjectFiles(t *testing.T) {
+	dir := t.TempDir()
+	pkg := projectTestPackage("demo", "1.0.0")
+	writeProjectState(t, dir, map[string]manifest.Dependency{"demo": {Constraint: "1.0.0"}}, pkg)
+	manifestPath := filepath.Join(dir, manifest.FileName)
+	lockPath := filepath.Join(dir, lockfile.FileName)
+	manifestBefore, err := os.ReadFile(manifestPath)
+	if err != nil { t.Fatal(err) }
+	lockBefore, err := os.ReadFile(lockPath)
+	if err != nil { t.Fatal(err) }
+
+	t.Setenv("PACKRAIL_HOME", filepath.Join(t.TempDir(), "packrail-home"))
+	m, _ := New(dir)
+	m.Ensure = func(registry.Package) (bool, error) {
+		t.Fatal("dry-run must not install packages")
+		return false, nil
+	}
+	plan, err := m.PlanSync()
+	if err != nil { t.Fatal(err) }
+	if plan.Packages != 1 || len(plan.NeedsInstall) != 1 || plan.NeedsInstall[0].Name != "demo" {
+		t.Fatalf("unexpected sync plan: %#v", plan)
+	}
+	if len(plan.Current) != 0 {
+		t.Fatalf("unexpected current packages: %#v", plan.Current)
+	}
+	manifestAfter, err := os.ReadFile(manifestPath)
+	if err != nil { t.Fatal(err) }
+	lockAfter, err := os.ReadFile(lockPath)
+	if err != nil { t.Fatal(err) }
+	if !bytes.Equal(manifestBefore, manifestAfter) || !bytes.Equal(lockBefore, lockAfter) {
+		t.Fatal("dry-run modified project metadata")
+	}
+}
+
+func TestPlanSyncRefusesPendingTransactionWithoutRecoveringIt(t *testing.T) {
+	dir := t.TempDir()
+	m, _ := New(dir)
+	if _, err := m.beginTransaction(); err != nil { t.Fatal(err) }
+	if _, err := m.PlanSync(); err == nil || !strings.Contains(err.Error(), "pending recovery") {
+		t.Fatalf("expected pending-recovery error, got %v", err)
+	}
+	if _, err := os.Stat(m.transactionPath()); err != nil {
+		t.Fatalf("dry-run removed or changed the transaction journal: %v", err)
+	}
+}
+
 func TestRemoveChangesProjectStateWithoutCallingGlobalUninstall(t *testing.T) {
 	dir := t.TempDir()
 	pkg := projectTestPackage("demo", "1.0.0")
