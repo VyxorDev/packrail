@@ -155,6 +155,8 @@ can inspect the matching GitHub Release tag and lock that historical release whe
 
 Existing **lockfile-only** projects remain valid: `prl sync` continues to sync them without requiring a manifest. Running `prl init` beside an existing v0.9 `packrail.lock` creates `packrail.json` using the exact locked package versions as intent. It does not invent wildcard/caret ranges or claim direct-source intent that the old lockfile cannot prove.
 
+Project operations acquire a per-project operating-system lock before reading or changing state. A second `prl` process targeting the same project fails fast instead of racing a manifest/lockfile update. The lock lives in the user's cache directory, not in the project tree.
+
 Operations that change both project files use a small recovery journal (`.packrail.transaction`). The old manifest/lock bytes are recorded before commit. If the second file cannot be committed, Packrail restores the old pair; if a process is interrupted with a prepared journal, the next project operation restores the previously valid state before doing new work. Package installation itself occurs before the metadata commit and uses Packrail's existing checksum/extraction recovery machinery.
 
 ### Lockfile v2 reproducibility

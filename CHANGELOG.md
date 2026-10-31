@@ -11,3 +11,4 @@ All notable Packrail changes are documented here.
 ### Improved
 - The release workflow publishes versions with a prerelease suffix as GitHub prereleases and plain semantic versions as stable releases.
 - Project sync planning refuses to hide an interrupted metadata transaction; normal sync must recover it first.
+- Project mutations use a cross-process operating-system lock to prevent concurrent commands from overwriting each other's manifest/lockfile changes.

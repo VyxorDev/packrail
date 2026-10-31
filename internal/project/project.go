@@ -102,6 +102,15 @@ func (m *Manager) transactionPath() string { return filepath.Join(m.Dir, transac
 // committed journal means both new files were already durable and only cleanup
 // was interrupted.
 func (m *Manager) Recover() error {
+	release, err := m.acquireOperationLock()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = release() }()
+	return m.recover()
+}
+
+func (m *Manager) recover() error {
 	path := m.transactionPath()
 	info, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -139,7 +148,10 @@ func (m *Manager) Recover() error {
 }
 
 func (m *Manager) Init() (InitResult, error) {
-	if err := m.Recover(); err != nil {
+	release, lockErr := m.acquireOperationLock()
+	if lockErr != nil { return InitResult{}, lockErr }
+	defer func() { _ = release() }()
+	if err := m.recover(); err != nil {
 		return InitResult{}, err
 	}
 	manifestPath := m.ManifestPath()
@@ -181,7 +193,10 @@ func (m *Manager) Init() (InitResult, error) {
 }
 
 func (m *Manager) Add(target string) (AddResult, error) {
-	if err := m.Recover(); err != nil {
+	release, lockErr := m.acquireOperationLock()
+	if lockErr != nil { return AddResult{}, lockErr }
+	defer func() { _ = release() }()
+	if err := m.recover(); err != nil {
 		return AddResult{}, err
 	}
 	manifestPath, lockPath := m.ManifestPath(), m.LockPath()
@@ -238,7 +253,10 @@ func (m *Manager) Add(target string) (AddResult, error) {
 }
 
 func (m *Manager) Sync() (SyncResult, error) {
-	if err := m.Recover(); err != nil {
+	release, lockErr := m.acquireOperationLock()
+	if lockErr != nil { return SyncResult{}, lockErr }
+	defer func() { _ = release() }()
+	if err := m.recover(); err != nil {
 		return SyncResult{}, err
 	}
 	lf, err := lockfile.Load(m.LockPath())
@@ -273,6 +291,9 @@ func (m *Manager) Sync() (SyncResult, error) {
 // PlanSync inspects the current project and installed state without recovering
 // journals, downloading artifacts, installing packages, or changing project files.
 func (m *Manager) PlanSync() (SyncPlan, error) {
+	release, lockErr := m.acquireOperationLock()
+	if lockErr != nil { return SyncPlan{}, lockErr }
+	defer func() { _ = release() }()
 	if _, err := os.Stat(m.transactionPath()); err == nil {
 		return SyncPlan{}, fmt.Errorf("a project transaction is pending recovery; run 'prl sync' without --dry-run first")
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -312,7 +333,10 @@ func (m *Manager) PlanSync() (SyncPlan, error) {
 }
 
 func (m *Manager) Update(names []string) (UpdateResult, error) {
-	if err := m.Recover(); err != nil {
+	release, lockErr := m.acquireOperationLock()
+	if lockErr != nil { return UpdateResult{}, lockErr }
+	defer func() { _ = release() }()
+	if err := m.recover(); err != nil {
 		return UpdateResult{}, err
 	}
 	mf, err := manifest.Load(m.ManifestPath())
@@ -367,7 +391,10 @@ func (m *Manager) Update(names []string) (UpdateResult, error) {
 }
 
 func (m *Manager) Remove(name string, uninstall bool) (RemoveResult, error) {
-	if err := m.Recover(); err != nil {
+	release, lockErr := m.acquireOperationLock()
+	if lockErr != nil { return RemoveResult{}, lockErr }
+	defer func() { _ = release() }()
+	if err := m.recover(); err != nil {
 		return RemoveResult{}, err
 	}
 	mf, err := manifest.Load(m.ManifestPath())
