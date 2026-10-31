@@ -143,7 +143,7 @@ The project manifest currently understands a deliberately small dependency gramm
 
 This syntax does **not** pretend Packrail already has npm-style historical registry storage. The current Packrail registry publishes one resolved version per package. A registry request succeeds only if that published version satisfies the requested constraint; Packrail returns an explicit error instead of silently substituting another version when it does not.
 
-Direct GitHub project dependencies have a stronger exact-version path. For global one-off installs, `prl install owner/repo` selects the latest compatible GitHub Release; the explicit `github:owner/repo` form remains supported. An exact project request such as:
+Direct GitHub project dependencies have a stronger exact-version path. For global one-off installs, `prl install owner/repo` selects the latest GitHub Release; the explicit `github:owner/repo` form remains supported. An exact project request such as:
 
 ```powershell
 prl add github:owner/repo@1.2.3

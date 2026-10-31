@@ -69,12 +69,12 @@ func projectSyncCommand(args []string) error {
 			fmt.Println("Planning legacy lockfile-only project (v0.9 compatibility mode).")
 		}
 		for _, pkg := range plan.NeedsInstall {
-			fmt.Printf("Would install/update %s %s.\\n", pkg.Name, pkg.Version)
+			fmt.Printf("Would install/update %s %s.\n", pkg.Name, pkg.Version)
 		}
 		for _, pkg := range plan.Current {
-			fmt.Printf("Already in sync: %s %s.\\n", pkg.Name, pkg.Version)
+			fmt.Printf("Already in sync: %s %s.\n", pkg.Name, pkg.Version)
 		}
-		fmt.Printf("Dry run complete: %d would install/update, %d already in sync. No files changed.\\n", len(plan.NeedsInstall), len(plan.Current))
+		fmt.Printf("Dry run complete: %d would install/update, %d already in sync. No files changed.\n", len(plan.NeedsInstall), len(plan.Current))
 		return nil
 	}
 
@@ -87,7 +87,7 @@ func projectSyncCommand(args []string) error {
 	if result.LockOnly {
 		fmt.Println("Syncing legacy lockfile-only project (v0.9 compatibility mode).")
 	}
-	fmt.Printf("Sync complete: %d installed/updated, %d already in sync.\\n", result.Installed, result.Current)
+	fmt.Printf("Sync complete: %d installed/updated, %d already in sync.\n", result.Installed, result.Current)
 	return nil
 }
 

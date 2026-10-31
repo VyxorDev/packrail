@@ -48,13 +48,13 @@ func run(args []string) error {
 			return parseErr
 		}
 		if directGitHub {
-			fmt.Printf("Inspecting GitHub release: %s\\n", repo)
+			fmt.Printf("Inspecting GitHub release: %s\n", repo)
 			draft, draftErr := publisher.New().GenerateForPlatform(repo, "", runtime.GOOS, runtime.GOARCH)
 			if draftErr != nil {
 				return draftErr
 			}
 			for _, warning := range draft.Warnings {
-				fmt.Fprintf(os.Stderr, "warning: %s\\n", warning)
+				fmt.Fprintf(os.Stderr, "warning: %s\n", warning)
 			}
 			if !draft.Complete {
 				return fmt.Errorf("GitHub release could not be inferred safely; use 'prl package generate %s' to inspect the draft", repo)
@@ -214,7 +214,7 @@ func parseGitHubInstallTarget(target string) (string, bool, error) {
 	if strings.Contains(value, "@") {
 		return "", true, fmt.Errorf("global GitHub installs use the latest release; use 'prl add github:owner/repo@version' inside a project for an exact pin")
 	}
-	if strings.ContainsAny(value, " \\t\\r\\n?#") {
+	if strings.ContainsAny(value, " \t\r\n?#") {
 		return "", true, fmt.Errorf("invalid GitHub repository target %q; expected owner/repo", target)
 	}
 	parts := strings.Split(value, "/")
